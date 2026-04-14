@@ -6,6 +6,7 @@ import { use, useEffect, useState } from 'react';
 import AiReportDisplay from '@/components/AiReportDisplay';
 import Navbar from '@/components/Navbar';
 import LoadingSpinner from '@/components/LoadingSpinner';
+import { useError } from '@/contexts/ErrorContext';
 
 interface Patient {
   _id: string;
@@ -41,6 +42,7 @@ interface Patient {
 export default function PatientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { showError } = useError();
   const [patient, setPatient] = useState<Patient | null>(null);
   const [isFetching, setIsFetching] = useState(false);
   const { id } = use(params);

@@ -24,6 +24,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const { showError } = useError();
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [filteredPatients, setFilteredPatients] = useState<Patient[]>([]);
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -32,24 +33,23 @@ export default function DashboardPage() {
   }, [status, router]);
 
   useEffect(() => {
-    if (session) {
-      fetchPatients();
-    }
-  }, [session]);
+    if (!session) return;
 
-  const fetchPatients = async () => {
-    const res = await fetch('/api/patients');
-    if (res.ok) {
-      const data = await res.json();
-      setPatients(data);
-    }
-  };
+    fetch('/api/patients')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: Patient[]) => {
+        setPatients(data);
+        setFilteredPatients(data);
+      });
+  }, [session]);
 
   const handleDelete = async (id: string) => {
     if (confirm('Are you sure you want to delete this patient?')) {
       const res = await fetch(`/api/patients/${id}`, { method: 'DELETE' });
       if (res.ok) {
-        setPatients(patients.filter(p => p._id !== id));
+        const updatedPatients = patients.filter(p => p._id !== id);
+        setPatients(updatedPatients);
+        setFilteredPatients(filteredPatients.filter(p => p._id !== id));
       }
     }
   };
@@ -65,7 +65,7 @@ export default function DashboardPage() {
     try {
       await navigator.clipboard.writeText(publicUrl);
       showError('Report link copied to clipboard!', 'success');
-    } catch (err) {
+    } catch {
       // Fallback for browsers that don't support clipboard API
       const textArea = document.createElement('textarea');
       textArea.value = publicUrl;
@@ -98,35 +98,6 @@ export default function DashboardPage() {
     }
   };
 
-  const SkeletonRow = () => (
-    <tr>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <div className="h-4 bg-gray-200 rounded w-3/4 animate-pulse"></div>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <div className="h-4 bg-gray-200 rounded w-1/2 animate-pulse"></div>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <div className="h-4 bg-gray-200 rounded w-2/3 animate-pulse"></div>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <div className="h-4 bg-gray-200 rounded w-1/4 animate-pulse"></div>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <div className="h-4 bg-gray-200 rounded w-1/4 animate-pulse"></div>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <div className="h-4 bg-gray-200 rounded w-1/3 animate-pulse"></div>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <div className="h-4 bg-gray-200 rounded w-1/3 animate-pulse"></div>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <div className="h-4 bg-gray-200 rounded w-1/2 animate-pulse"></div>
-      </td>
-    </tr>
-  );
-
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
@@ -154,10 +125,11 @@ export default function DashboardPage() {
                   placeholder="Search patients by name..."
                   className="w-full sm:w-64 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                   onChange={(e) => {
-                    const filtered = patients.filter(p => 
-                      p.name.toLowerCase().includes(e.target.value.toLowerCase())
+                    const query = e.target.value.toLowerCase();
+                    const filtered = patients.filter(p =>
+                      p.name.toLowerCase().includes(query)
                     );
-                    setPatients(filtered);
+                    setFilteredPatients(filtered);
                   }}
                 />
                 <svg className="absolute left-3 top-2.5 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -184,7 +156,7 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {patients.length === 0 ? (
+                  {filteredPatients.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="px-6 py-12 text-center">
                         <div className="text-gray-500">
@@ -192,7 +164,7 @@ export default function DashboardPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                           </svg>
                           <h3 className="text-lg font-medium text-gray-900 mb-2">No patients found</h3>
-                          <p className="text-gray-500 mb-4">Click "Add Patient" to get started with your first patient.</p>
+                          <p className="text-gray-500 mb-4">Click &quot;Add Patient&quot; to get started with your first patient.</p>
                           <Link
                             href="/add-patient"
                             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors duration-200"
@@ -203,7 +175,7 @@ export default function DashboardPage() {
                       </td>
                     </tr>
                   ) : (
-                    patients.map((patient) => (
+                    filteredPatients.map((patient) => (
                       <tr key={patient._id} className="hover:bg-gray-50 transition-colors duration-150">
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{patient.name}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{patient.phone}</td>

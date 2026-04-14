@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import dbConnect from '@/lib/db';
 import Patient from '@/models/Patient';
 import { v2 as cloudinary } from 'cloudinary';
@@ -275,11 +277,10 @@ export async function POST(req: NextRequest) {
   console.log('🚀 UPLOAD ROUTE CALLED at:', new Date().toISOString());
   console.log('========================================');
   try {
-    // Temporarily disable auth for testing
-    // const session = await getServerSession(authOptions);
-    // if (!session) {
-    //   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    // }
+    const session = await getServerSession(authOptions);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
     console.log('1️⃣  Received request, parsing FormData...');
     const formData = await req.formData();
@@ -304,6 +305,16 @@ export async function POST(req: NextRequest) {
     console.log('3️⃣  Connecting to DB...');
     await dbConnect();
     console.log('✅ DB connected');
+
+    const patientForPrompt = await Patient.findOne({
+      _id: patientId,
+      hospitalId: session.user.id,
+    }).select('name');
+
+    if (!patientForPrompt) {
+      console.log('❌ Patient not found for hospital:', { patientId, hospitalId: session.user.id });
+      return NextResponse.json({ error: 'Patient not found' }, { status: 404 });
+    }
 
     // Upload to Cloudinary
     const bytes = await file.arrayBuffer();
@@ -335,7 +346,6 @@ export async function POST(req: NextRequest) {
       extracted.length > 80 ? extracted.slice(0, 120_000) : fallbackSnippet;
     console.log('✅ PDF text extracted:', extracted.length, 'chars');
 
-    const patientForPrompt = await Patient.findById(patientId).select('name');
     const patientName = patientForPrompt?.name || 'Patient';
     console.log('6️⃣ Patient name:', patientName);
 
@@ -424,8 +434,8 @@ Fields:
 
     // Update patient
     console.log('9️⃣ Updating patient record...');
-    const patient = await Patient.findByIdAndUpdate(
-      patientId,
+    const patient = await Patient.findOneAndUpdate(
+      { _id: patientId, hospitalId: session.user.id },
       {
         reportUrl,
         aiSummary: aiResponse.overview,

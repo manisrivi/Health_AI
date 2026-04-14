@@ -4,20 +4,22 @@ import connectDB from "@/lib/db";
 import Patient from "@/models/Patient";
 
 interface PageProps {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 export default async function PublicReportPage({ params }: PageProps) {
+  const { id } = await params;
+
   await connectDB();
 
   // Validate Mongo ID
-  if (!mongoose.Types.ObjectId.isValid(params.id)) {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
     return notFound();
   }
 
-  const patient = await Patient.findById(params.id).lean();
+  const patient = await Patient.findById(id).lean();
 
   if (!patient) {
     return notFound();

@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
 
-export async function sendReportEmail(to: string, reportId: string) {
+export async function sendReportEmail(to: string, publicToken: string) {
   try {
     const transporter = nodemailer.createTransport({
       service: "gmail",
@@ -10,7 +10,7 @@ export async function sendReportEmail(to: string, reportId: string) {
       },
     });
 
-    const reportLink = `${process.env.NEXT_PUBLIC_BASE_URL}/report/public/${reportId}`;
+    const reportLink = `${process.env.NEXT_PUBLIC_BASE_URL}/report/${publicToken}`;
 
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
