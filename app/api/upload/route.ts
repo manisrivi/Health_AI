@@ -248,6 +248,21 @@ async function generateGeminiJson({
   throw lastError ?? new Error('Gemini request failed');
 }
 
+function getGeminiFailureReason(error: unknown, modelName: string) {
+  const status = (error as { status?: number })?.status;
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+
+  if (status === 401 || status === 403) {
+    if (message.includes('leaked')) return 'gemini_api_key_leaked_or_disabled';
+    if (message.includes('api key')) return 'gemini_api_key_invalid_or_restricted';
+    return 'gemini_permission_denied';
+  }
+  if (status === 404) return `gemini_model_not_found:${modelName}`;
+  if (status === 429) return 'gemini_quota_exceeded';
+  if (error instanceof SyntaxError) return 'invalid_ai_json_response';
+  return 'gemini_request_failed';
+}
+
 function extractTopText(value: string | undefined, maxLength = 220) {
   if (!value) return '';
   const trimmed = value.replace(/\s+/g, ' ').trim();
@@ -584,20 +599,10 @@ Rules:
           break;
         } catch (aiError: unknown) {
           console.error(`Gemini analysis failed for model ${modelName}:`, aiError);
-          const status = (aiError as { status?: number })?.status;
-          if (status === 404) {
-            aiReason = `gemini_model_not_found:${modelName}`;
+          aiReason = getGeminiFailureReason(aiError, modelName);
+          if (aiReason.startsWith('gemini_model_not_found:')) {
             continue;
           }
-          if (status === 429) {
-            aiReason = 'gemini_quota_exceeded';
-            break;
-          }
-          if (aiError instanceof SyntaxError) {
-            aiReason = 'invalid_ai_json_response';
-            break;
-          }
-          aiReason = 'gemini_request_failed';
           break;
         }
       }
