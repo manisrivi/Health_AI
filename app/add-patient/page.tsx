@@ -21,6 +21,9 @@ import { cn } from '@/lib/utils';
 
 type UploadProgress = 'idle' | 'uploading' | 'analyzing' | 'done';
 
+const MAX_UPLOAD_FILE_SIZE_MB = 4;
+const MAX_UPLOAD_FILE_SIZE_BYTES = MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024;
+
 const progressCopy: Record<Exclude<UploadProgress, 'idle'>, { title: string; description: string }> = {
   uploading: {
     title: 'Uploading secure PDF',
@@ -95,8 +98,8 @@ export default function AddPatientPage() {
       newErrors.gender = 'Please select a gender';
     }
 
-    if (file && file.size > 10 * 1024 * 1024) {
-      newErrors.file = 'File size must be less than 10MB';
+    if (file && file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+      newErrors.file = `File size must be less than ${MAX_UPLOAD_FILE_SIZE_MB}MB`;
     }
 
     if (file && file.type !== 'application/pdf') {
@@ -117,8 +120,9 @@ export default function AddPatientPage() {
       return;
     }
 
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      showError('File too large (max 10MB)', 'error');
+    if (selectedFile.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+      showError(`File too large (max ${MAX_UPLOAD_FILE_SIZE_MB}MB)`, 'error');
+      event.target.value = '';
       return;
     }
 
@@ -367,7 +371,7 @@ export default function AddPatientPage() {
                         </svg>
                       </div>
                       <p className="text-base font-medium text-slate-900">Drop a PDF or click to browse</p>
-                      <p className="mt-2 text-sm text-slate-500">Secure upload, 10MB max, PDF only.</p>
+                      <p className="mt-2 text-sm text-slate-500">Secure upload, 4MB max, PDF only.</p>
                     </>
                   ) : (
                     <div className="w-full text-left">

@@ -17,6 +17,8 @@ cloudinary.config({
 });
 
 const geminiApiKey = process.env.GEMINI_API_KEY?.trim() || '';
+const MAX_UPLOAD_FILE_SIZE_MB = 4;
+const MAX_UPLOAD_FILE_SIZE_BYTES = MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024;
 const geminiModelCandidates = [
   process.env.GEMINI_MODEL,
   'gemini-2.5-flash',
@@ -470,9 +472,9 @@ export async function POST(req: NextRequest) {
       console.log('❌ Not a PDF');
       return NextResponse.json({ error: 'Please upload a PDF file only' }, { status: 400 });
     }
-    if (file.size > 10 * 1024 * 1024) {
+    if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
       console.log('❌ File too large');
-      return NextResponse.json({ error: 'File size must be less than 10MB' }, { status: 400 });
+      return NextResponse.json({ error: `File size must be less than ${MAX_UPLOAD_FILE_SIZE_MB}MB` }, { status: 400 });
     }
 
     console.log('3️⃣  Connecting to DB...');
