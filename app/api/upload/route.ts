@@ -171,7 +171,7 @@ async function generateGeminiJson({
   const generationConfig = useSchema
     ? {
         responseMimeType: 'application/json',
-        responseSchema: labReportJsonSchema,
+        responseJsonSchema: labReportJsonSchema,
       }
     : {
         responseMimeType: 'application/json',
