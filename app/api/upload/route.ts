@@ -17,7 +17,7 @@ cloudinary.config({
 });
 
 const geminiApiKey = process.env.GEMINI_API_KEY?.trim() || '';
-const MAX_UPLOAD_FILE_SIZE_MB = 4;
+const MAX_UPLOAD_FILE_SIZE_MB = 20;
 const MAX_UPLOAD_FILE_SIZE_BYTES = MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024;
 const geminiModelCandidates = [
   process.env.GEMINI_MODEL,
@@ -154,6 +154,42 @@ function extractGeminiErrorMessage(payload: unknown): string {
   if (!payload || typeof payload !== 'object') return '';
   const error = (payload as { error?: { message?: unknown } }).error;
   return typeof error?.message === 'string' ? error.message : '';
+}
+
+function isCloudinaryReportUrl(url: string, patientId: string) {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  if (!cloudName) return false;
+
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === 'https:' &&
+      parsed.hostname === 'res.cloudinary.com' &&
+      parsed.pathname.includes(`/${cloudName}/raw/upload/`) &&
+      parsed.pathname.includes(`/reports/${patientId}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function downloadPdfFromCloudinary(reportUrl: string) {
+  const response = await fetch(reportUrl);
+  if (!response.ok) {
+    throw new Error('Uploaded report could not be downloaded for analysis');
+  }
+
+  const contentLength = Number(response.headers.get('content-length') || '0');
+  if (contentLength > MAX_UPLOAD_FILE_SIZE_BYTES) {
+    throw new Error(`File size must be less than ${MAX_UPLOAD_FILE_SIZE_MB}MB`);
+  }
+
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > MAX_UPLOAD_FILE_SIZE_BYTES) {
+    throw new Error(`File size must be less than ${MAX_UPLOAD_FILE_SIZE_MB}MB`);
+  }
+
+  return Buffer.from(bytes);
 }
 
 async function generateGeminiJson({
@@ -457,24 +493,49 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log('1️⃣  Received request, parsing FormData...');
-    const formData = await req.formData();
-    const file = formData.get('file') as File;
-    const patientId = formData.get('patientId') as string;
+    const contentType = req.headers.get('content-type') || '';
+    let buffer: Buffer;
+    let patientId: string;
+    let reportUrl: string | undefined;
 
-    console.log('2️⃣  FormData parsed:', { file: file?.name, patientId });
+    if (contentType.includes('application/json')) {
+      console.log('1️⃣  Received Cloudinary upload reference...');
+      const body = await req.json();
+      patientId = body.patientId;
+      reportUrl = body.reportUrl;
 
-    if (!file || !patientId) {
-      console.log('❌ Missing file or patientId');
-      return NextResponse.json({ error: 'Please provide both file and patient ID' }, { status: 400 });
-    }
-    if (file.type !== 'application/pdf') {
-      console.log('❌ Not a PDF');
-      return NextResponse.json({ error: 'Please upload a PDF file only' }, { status: 400 });
-    }
-    if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
-      console.log('❌ File too large');
-      return NextResponse.json({ error: `File size must be less than ${MAX_UPLOAD_FILE_SIZE_MB}MB` }, { status: 400 });
+      if (!patientId || !reportUrl) {
+        return NextResponse.json({ error: 'Please provide both report URL and patient ID' }, { status: 400 });
+      }
+      if (!isCloudinaryReportUrl(reportUrl, patientId)) {
+        return NextResponse.json({ error: 'Invalid report upload URL' }, { status: 400 });
+      }
+
+      console.log('2️⃣  Downloading uploaded PDF for analysis...');
+      buffer = await downloadPdfFromCloudinary(reportUrl);
+    } else {
+      console.log('1️⃣  Received request, parsing FormData...');
+      const formData = await req.formData();
+      const file = formData.get('file') as File;
+      patientId = formData.get('patientId') as string;
+
+      console.log('2️⃣  FormData parsed:', { file: file?.name, patientId });
+
+      if (!file || !patientId) {
+        console.log('❌ Missing file or patientId');
+        return NextResponse.json({ error: 'Please provide both file and patient ID' }, { status: 400 });
+      }
+      if (file.type !== 'application/pdf') {
+        console.log('❌ Not a PDF');
+        return NextResponse.json({ error: 'Please upload a PDF file only' }, { status: 400 });
+      }
+      if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+        console.log('❌ File too large');
+        return NextResponse.json({ error: `File size must be less than ${MAX_UPLOAD_FILE_SIZE_MB}MB` }, { status: 400 });
+      }
+
+      const bytes = await file.arrayBuffer();
+      buffer = Buffer.from(bytes);
     }
 
     console.log('3️⃣  Connecting to DB...');
@@ -492,27 +553,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Patient not found' }, { status: 404 });
     }
 
-    // Upload to Cloudinary
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-
-    console.log('4️⃣ Uploading to Cloudinary...');
-    const uploadResult = await new Promise((resolve, reject) => {
-      cloudinary.uploader.upload_stream(
-        { resource_type: 'raw', public_id: `reports/${patientId}` },
-        (error, result) => {
-          if (error) {
-            console.error('Cloudinary upload error:', error);
-            reject(new Error('Upload failed. Please try again'));
-          } else {
-            resolve(result);
+    if (!reportUrl) {
+      console.log('4️⃣ Uploading to Cloudinary...');
+      const uploadResult = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { resource_type: 'raw', public_id: `reports/${patientId}`, overwrite: true },
+          (error, result) => {
+            if (error) {
+              console.error('Cloudinary upload error:', error);
+              reject(new Error('Upload failed. Please try again'));
+            } else {
+              resolve(result);
+            }
           }
-        }
-      ).end(buffer);
-    });
+        ).end(buffer);
+      });
 
-    const reportUrl = (uploadResult as { secure_url?: string }).secure_url;
-    console.log('✅ Cloudinary upload done:', reportUrl);
+      reportUrl = (uploadResult as { secure_url?: string }).secure_url;
+      console.log('✅ Cloudinary upload done:', reportUrl);
+    }
 
     console.log('5️⃣ Extracting PDF text...');
     const extracted = await extractPdfText(buffer);
