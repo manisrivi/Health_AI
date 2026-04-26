@@ -70,8 +70,8 @@ export default function ProfilePage() {
     router.push('/');
   };
 
-  const getInitials = (name: string) => {
-    return name
+  const getInitials = (name?: string | null) => {
+    return (name || 'User')
       .split(' ')
       .map(word => word[0])
       .join('')
@@ -119,7 +119,7 @@ export default function ProfilePage() {
                 {getInitials(session.user.name)}
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">{session.user.name}</h2>
+                <h2 className="text-2xl font-bold text-gray-900">{session.user.name || 'User'}</h2>
                 <p className="text-gray-600">{session.user.email}</p>
                 <p className="text-sm text-gray-500 mt-1">
                   Member since: {memberSince}

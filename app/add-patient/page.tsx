@@ -168,6 +168,19 @@ export default function AddPatientPage() {
           throw new Error(errorData.error || 'Upload failed. Please try again');
         }
 
+        const uploadData = await uploadRes.json().catch(() => null);
+        if (uploadData?.aiStatus === 'fallback') {
+          const reason =
+            uploadData.aiReason === 'gemini_api_key_leaked_or_disabled'
+              ? 'Gemini API key is disabled because Google reported it as leaked. The report was uploaded with a fallback summary.'
+              : uploadData.aiReason === 'gemini_api_key_invalid_or_restricted'
+                ? 'Gemini API key is invalid or restricted. The report was uploaded with a fallback summary.'
+                : uploadData.aiReason === 'gemini_quota_exceeded'
+                  ? 'Gemini quota is exceeded. The report was uploaded with a fallback summary.'
+                  : 'Gemini analysis could not run. The report was uploaded with a fallback summary.';
+          showError(reason, 'error');
+        }
+
         setUploadProgress('analyzing');
         await new Promise((resolve) => setTimeout(resolve, 2000));
         setUploadProgress('done');

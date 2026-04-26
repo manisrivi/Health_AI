@@ -5,6 +5,7 @@ import dbConnect from './db';
 import User from '../models/User';
 
 export const authOptions: NextAuthOptions = {
+  secret: process.env.NEXTAUTH_SECRET,
   providers: [
     CredentialsProvider({
       name: 'credentials',
@@ -47,12 +48,14 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.hospitalId = user.id;
+        token.hospitalName = user.hospitalName;
       }
       return token;
     },
     async session({ session, token }) {
       if (token && session.user) {
         session.user.id = token.hospitalId as string;
+        session.user.hospitalName = token.hospitalName as string;
       }
       return session;
     },
