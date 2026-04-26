@@ -1,11 +1,40 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import Navbar from '@/components/Navbar';
 import LoadingSpinner from '@/components/LoadingSpinner';
+import Navbar from '@/components/Navbar';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { useError } from '@/contexts/ErrorContext';
+import { cn } from '@/lib/utils';
+
+type UploadProgress = 'idle' | 'uploading' | 'analyzing' | 'done';
+
+const progressCopy: Record<Exclude<UploadProgress, 'idle'>, { title: string; description: string }> = {
+  uploading: {
+    title: 'Uploading secure PDF',
+    description: 'We are sending the report to your workspace and validating the file.',
+  },
+  analyzing: {
+    title: 'Generating AI summary',
+    description: 'Healthcare AI is extracting findings and preparing the report summary.',
+  },
+  done: {
+    title: 'Finalizing patient record',
+    description: 'Everything is ready. We are redirecting you back to the dashboard now.',
+  },
+};
 
 export default function AddPatientPage() {
   const { data: session, status } = useSession();
@@ -21,7 +50,7 @@ export default function AddPatientPage() {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [uploadProgress, setUploadProgress] = useState<'idle' | 'uploading' | 'analyzing' | 'done'>('idle');
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress>('idle');
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -29,12 +58,13 @@ export default function AddPatientPage() {
     }
   }, [status, router]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+  const handleChange = (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = event.target;
+    setFormData((current) => ({ ...current, [name]: value }));
+    setErrors((current) => ({ ...current, [name]: '' }));
   };
 
   const validateForm = () => {
-    console.log('Validating form with data:', formData);
     const newErrors: Record<string, string> = {};
 
     if (!formData.name.trim()) {
@@ -57,7 +87,7 @@ export default function AddPatientPage() {
 
     if (!formData.age.trim()) {
       newErrors.age = 'Age is required';
-    } else if (parseInt(formData.age) < 1 || parseInt(formData.age) > 150) {
+    } else if (parseInt(formData.age, 10) < 1 || parseInt(formData.age, 10) > 150) {
       newErrors.age = 'Age must be between 1 and 150';
     }
 
@@ -74,60 +104,46 @@ export default function AddPatientPage() {
     }
 
     setErrors(newErrors);
-    console.log('Validation errors found:', newErrors);
-    const isValid = Object.keys(newErrors).length === 0;
-    console.log('Form is valid:', isValid);
-    return isValid;
+    return Object.keys(newErrors).length === 0;
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const selectedFile = e.target.files[0];
-      
-      // Check file type
-      if (selectedFile.type !== 'application/pdf') {
-        showError('Please upload PDF only', 'error');
-        return;
-      }
-      
-      // Check file size
-      if (selectedFile.size > 10 * 1024 * 1024) {
-        showError('File too large (max 10MB)', 'error');
-        return;
-      }
-      
-      setFile(selectedFile);
-      setErrors({ ...errors, file: '' });
-    }
-  };
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!event.target.files?.length) return;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('🔵 Form submission started');
-    console.log('🔵 FormData:', formData);
-    console.log('🔵 Has file:', !!file, file?.name);
+    const selectedFile = event.target.files[0];
 
-    if (!validateForm()) {
-      console.log('Form validation failed');
+    if (selectedFile.type !== 'application/pdf') {
+      showError('Please upload PDF only', 'error');
       return;
     }
 
-    console.log('Form validation passed, setting loading to true');
+    if (selectedFile.size > 10 * 1024 * 1024) {
+      showError('File too large (max 10MB)', 'error');
+      return;
+    }
+
+    setFile(selectedFile);
+    setErrors((current) => ({ ...current, file: '' }));
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (!validateForm()) {
+      return;
+    }
+
     setLoading(true);
 
     try {
-      // First, create patient
-      console.log('🔵 Step 1: Creating patient via /api/patients...');
       const patientRes = await fetch('/api/patients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
-          age: parseInt(formData.age),
+          age: parseInt(formData.age, 10),
         }),
       });
-
-      console.log('🔵 Patient response status:', patientRes.status);
 
       if (!patientRes.ok) {
         const err = await patientRes.json().catch(() => ({}));
@@ -135,12 +151,8 @@ export default function AddPatientPage() {
       }
 
       const patient = await patientRes.json();
-      console.log('🔵 Patient created:', patient._id, patient.email);
 
-      // Then, upload file if exists
       if (file) {
-        console.log('🔵 Step 2: Uploading file via /api/upload...');
-        console.log('🔵 Upload payload: patientId=', patient._id, 'file=', file.name);
         setUploadProgress('uploading');
         const formDataUpload = new FormData();
         formDataUpload.append('file', file);
@@ -151,33 +163,22 @@ export default function AddPatientPage() {
           body: formDataUpload,
         });
 
-        console.log('🔵 Upload response status:', uploadRes.status);
-
         if (!uploadRes.ok) {
           const errorData = await uploadRes.json().catch(() => ({}));
-          console.error('🔵 Upload error response:', errorData);
           throw new Error(errorData.error || 'Upload failed. Please try again');
         }
 
-        const uploadResult = await uploadRes.json();
-        console.log('🔵 Upload success response:', uploadResult);
-
         setUploadProgress('analyzing');
-        // Simulate AI analysis time
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         setUploadProgress('done');
-      } else {
-        console.log('🔵 No file attached. Skipping upload.');
       }
 
       setLoading(false);
-      console.log('🔵 Form submission complete. Redirecting to /dashboard');
       router.push('/dashboard');
     } catch (error) {
       setLoading(false);
       setUploadProgress('idle');
-      
-      // Handle specific network errors
+
       if (error instanceof Error) {
         if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
           showError('Connection error. Please check your internet connection', 'error');
@@ -194,7 +195,7 @@ export default function AddPatientPage() {
 
   if (status === 'loading') {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center">
         <LoadingSpinner size="lg" text="Loading..." />
       </div>
     );
@@ -204,253 +205,288 @@ export default function AddPatientPage() {
     return null;
   }
 
+  const progressState = uploadProgress !== 'idle' ? progressCopy[uploadProgress] : null;
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen">
       <Navbar />
-      
-      <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0">
-          {/* Header */}
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">Add New Patient</h1>
-            <p className="text-gray-600">Enter patient information and upload their medical report for AI analysis</p>
-          </div>
 
-          {/* Form Card */}
-          <div className="bg-white shadow-lg rounded-lg border border-gray-100">
-            <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-8">
-              
-              {/* Patient Information Section */}
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
-                  <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                  </svg>
-                  Patient Information
-                </h2>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-                      Full Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      name="name"
-                      id="name"
-                      required
-                      value={formData.name}
-                      onChange={handleChange}
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
-                        errors.name ? 'border-red-500' : 'border-gray-300'
-                      }`}
-                      placeholder="Enter patient's full name"
-                    />
-                    {errors.name && (
-                      <p className="mt-1 text-sm text-red-600">{errors.name}</p>
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <section className="mb-8 grid gap-4 lg:grid-cols-[1.2fr,0.8fr]">
+          <Card className="overflow-hidden border-sky-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,249,255,0.98))]">
+            <CardContent className="p-6 sm:p-8">
+              <Badge variant="outline" className="mb-4 rounded-full px-3 py-1 text-[11px] tracking-[0.2em]">
+                NEW PATIENT
+              </Badge>
+              <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
+                Create a patient record and start AI analysis in one step.
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
+                Capture patient details, attach the PDF report, and let HealthAI prepare a
+                clinician-friendly summary automatically.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Submission checklist</CardTitle>
+              <CardDescription>Everything required for a clean intake.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm text-slate-600">
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="font-medium text-slate-900">Required fields</p>
+                <p className="mt-1">Full name, phone, email, age, and gender.</p>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="font-medium text-slate-900">Report file</p>
+                <p className="mt-1">PDF format only, maximum size 10MB.</p>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="font-medium text-slate-900">Processing</p>
+                <p className="mt-1">AI analysis begins automatically after upload.</p>
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+
+        <form onSubmit={handleSubmit} className="grid gap-6 lg:grid-cols-[1.15fr,0.85fr]">
+          <Card>
+            <CardHeader>
+              <CardTitle>Patient details</CardTitle>
+              <CardDescription>Use complete contact information for future report delivery.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-5 sm:grid-cols-2">
+              <Field
+                label="Full Name"
+                name="name"
+                value={formData.name}
+                error={errors.name}
+                onChange={handleChange}
+                placeholder="Enter patient's full name"
+              />
+              <Field
+                label="Phone Number"
+                name="phone"
+                value={formData.phone}
+                error={errors.phone}
+                onChange={handleChange}
+                placeholder="Enter phone number"
+                type="tel"
+              />
+              <Field
+                label="Email Address"
+                name="email"
+                value={formData.email}
+                error={errors.email}
+                onChange={handleChange}
+                placeholder="patient@example.com"
+                type="email"
+              />
+              <div className="grid gap-5 sm:grid-cols-2 sm:col-span-2">
+                <Field
+                  label="Age"
+                  name="age"
+                  value={formData.age}
+                  error={errors.age}
+                  onChange={handleChange}
+                  placeholder="Age"
+                  type="number"
+                />
+                <div className="space-y-2">
+                  <label htmlFor="gender" className="text-sm font-medium text-slate-800">
+                    Gender
+                  </label>
+                  <select
+                    id="gender"
+                    name="gender"
+                    value={formData.gender}
+                    onChange={handleChange}
+                    className={cn(
+                      'flex h-11 w-full rounded-xl border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus-visible:border-sky-400 focus-visible:ring-4 focus-visible:ring-sky-100',
+                      errors.gender ? 'border-rose-300 focus-visible:ring-rose-100' : 'border-slate-200'
                     )}
-                    <p className="mt-1 text-xs text-gray-500">{formData.name.length}/100 characters</p>
-                  </div>
-
-                  <div>
-                    <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                      Phone Number <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="tel"
-                      name="phone"
-                      id="phone"
-                      required
-                      value={formData.phone}
-                      onChange={handleChange}
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
-                        errors.phone ? 'border-red-500' : 'border-gray-300'
-                      }`}
-                      placeholder="Enter phone number"
-                    />
-                    {errors.phone && (
-                      <p className="mt-1 text-sm text-red-600">{errors.phone}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                      Email Address <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="email"
-                      name="email"
-                      id="email"
-                      required
-                      value={formData.email}
-                      onChange={handleChange}
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
-                        errors.email ? 'border-red-500' : 'border-gray-300'
-                      }`}
-                      placeholder="patient@example.com"
-                    />
-                    {errors.email && (
-                      <p className="mt-1 text-sm text-red-600">{errors.email}</p>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="age" className="block text-sm font-medium text-gray-700 mb-2">
-                        Age <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="number"
-                        name="age"
-                        id="age"
-                        required
-                        min="1"
-                        max="150"
-                        value={formData.age}
-                        onChange={handleChange}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
-                          errors.age ? 'border-red-500' : 'border-gray-300'
-                        }`}
-                        placeholder="Age"
-                      />
-                      {errors.age && (
-                        <p className="mt-1 text-sm text-red-600">{errors.age}</p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label htmlFor="gender" className="block text-sm font-medium text-gray-700 mb-2">
-                        Gender <span className="text-red-500">*</span>
-                      </label>
-                      <select
-                        name="gender"
-                        id="gender"
-                        required
-                        value={formData.gender}
-                        onChange={handleChange}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
-                          errors.gender ? 'border-red-500' : 'border-gray-300'
-                        }`}
-                      >
-                        <option value="">Select Gender</option>
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                        <option value="Other">Other</option>
-                      </select>
-                      {errors.gender && (
-                        <p className="mt-1 text-sm text-red-600">{errors.gender}</p>
-                      )}
-                    </div>
-                  </div>
+                  >
+                    <option value="">Select gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                  {errors.gender ? <p className="text-sm text-rose-600">{errors.gender}</p> : null}
                 </div>
               </div>
+            </CardContent>
+          </Card>
 
-              {/* Medical Report Section */}
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
-                  <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Medical Report
-                </h2>
-
-                <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition-colors duration-200">
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Medical report</CardTitle>
+                <CardDescription>Upload a PDF report to trigger AI analysis.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <label
+                  htmlFor="report"
+                  className={cn(
+                    'flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-10 text-center transition',
+                    file
+                      ? 'border-emerald-200 bg-emerald-50/70'
+                      : 'border-slate-300 bg-slate-50 hover:border-sky-300 hover:bg-sky-50/60'
+                  )}
+                >
                   <input
-                    type="file"
-                    name="report"
                     id="report"
+                    type="file"
                     accept=".pdf"
                     onChange={handleFileChange}
                     className="hidden"
                   />
-                  
                   {!file ? (
-                    <label htmlFor="report" className="cursor-pointer">
-                      <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                        </svg>
-                      </div>
-                      <p className="text-gray-900 font-medium mb-2">Drop your medical report here</p>
-                      <p className="text-sm text-gray-500 mb-4">or click to browse</p>
-                      <p className="text-xs text-gray-400">Supports PDF files up to 10MB</p>
-                    </label>
-                  ) : (
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
-                          <svg className="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                          </svg>
-                        </div>
-                        <div className="text-left">
-                          <p className="text-sm font-medium text-gray-900">{file.name}</p>
-                          <p className="text-xs text-gray-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setFile(null)}
-                        className="text-red-500 hover:text-red-700 transition-colors duration-200"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  )}
-                </div>
-                
-                {errors.file && (
-                  <p className="mt-2 text-sm text-red-600">{errors.file}</p>
-                )}
-              </div>
-
-              {/* Progress Indicator */}
-              {uploadProgress !== 'idle' && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-                    <div>
-                      <p className="text-sm font-medium text-blue-900">
-                        {uploadProgress === 'uploading' && 'Uploading PDF...'}
-                        {uploadProgress === 'analyzing' && 'AI is analyzing your report...'}
-                        {uploadProgress === 'done' && 'Analysis complete!'}
-                      </p>
-                      <p className="text-xs text-blue-700">
-                        {uploadProgress === 'uploading' && 'Please wait while we upload your file'}
-                        {uploadProgress === 'analyzing' && 'This usually takes 2-3 seconds'}
-                        {uploadProgress === 'done' && 'Redirecting to dashboard...'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Submit Button */}
-              <div className="pt-4">
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full flex justify-center items-center px-6 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-[1.02]"
-                >
-                  {loading ? (
                     <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                      {uploadProgress === 'idle' && 'Creating Patient...'}
-                      {uploadProgress === 'uploading' && 'Uploading Report...'}
-                      {uploadProgress === 'analyzing' && 'Analyzing Report...'}
-                      {uploadProgress === 'done' && 'Almost Done...'}
+                      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-sm">
+                        <svg className="h-6 w-6 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={1.8}
+                            d="M7 16a4 4 0 0 1-.88-7.9A5 5 0 1 1 15.9 6H16a5 5 0 0 1 1 9.9M15 13l-3-3m0 0-3 3m3-3v12"
+                          />
+                        </svg>
+                      </div>
+                      <p className="text-base font-medium text-slate-900">Drop a PDF or click to browse</p>
+                      <p className="mt-2 text-sm text-slate-500">Secure upload, 10MB max, PDF only.</p>
                     </>
                   ) : (
-                    'Add Patient'
+                    <div className="w-full text-left">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-rose-600 shadow-sm">
+                            <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                              <path
+                                fillRule="evenodd"
+                                d="M4 4a2 2 0 0 1 2-2h4.59A2 2 0 0 1 12 2.59L15.41 6A2 2 0 0 1 16 7.41V16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4Z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-950">{file.name}</p>
+                            <p className="text-sm text-slate-500">
+                              {(file.size / 1024 / 1024).toFixed(2)} MB uploaded
+                            </p>
+                          </div>
+                        </div>
+                        <Button variant="ghost" size="sm" onClick={() => setFile(null)}>
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
                   )}
-                </button>
-              </div>
-            </form>
+                </label>
+                {errors.file ? <p className="mt-3 text-sm text-rose-600">{errors.file}</p> : null}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Ready to submit</CardTitle>
+                <CardDescription>We will create the patient first, then process the report.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 text-sm text-slate-600">
+                  <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
+                    <span>Patient email</span>
+                    <span className="font-medium text-slate-900">
+                      {formData.email || 'Not provided'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
+                    <span>Attachment</span>
+                    <span className="max-w-[180px] truncate text-right font-medium text-slate-900">
+                      {file ? file.name : 'Optional'}
+                    </span>
+                  </div>
+                </div>
+                <Button type="submit" size="lg" className="w-full rounded-xl" disabled={loading}>
+                  {loading ? (
+                    <>
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                      Creating record &amp; analyzing report...
+                    </>
+                  ) : (
+                    'Create patient record'
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
           </div>
-        </div>
+        </form>
       </main>
+
+      <Dialog open={uploadProgress !== 'idle'} onOpenChange={() => undefined}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{progressState?.title}</DialogTitle>
+            <DialogDescription>{progressState?.description}</DialogDescription>
+          </DialogHeader>
+          <div className="mt-2 space-y-4">
+            <div className="overflow-hidden rounded-full bg-slate-100">
+              <div
+                className={cn(
+                  'h-2 rounded-full bg-[linear-gradient(90deg,#0ea5e9,#2563eb)] transition-all duration-500',
+                  uploadProgress === 'uploading' && 'w-1/3',
+                  uploadProgress === 'analyzing' && 'w-2/3',
+                  uploadProgress === 'done' && 'w-full'
+                )}
+              />
+            </div>
+            <div className="flex items-center gap-3 rounded-2xl bg-slate-50 p-4">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-sky-200 border-t-sky-600" />
+              <p className="text-sm text-slate-600">
+                {uploadProgress === 'done'
+                  ? 'Preparing dashboard redirect.'
+                  : 'Please keep this window open while we finish processing.'}
+              </p>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  name,
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+  error,
+}: {
+  label: string;
+  name: string;
+  value: string;
+  onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  placeholder: string;
+  type?: string;
+  error?: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <label htmlFor={name} className="text-sm font-medium text-slate-800">
+        {label}
+      </label>
+      <Input
+        id={name}
+        name={name}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        type={type}
+        className={error ? 'border-rose-300 focus-visible:ring-rose-100' : ''}
+      />
+      {error ? <p className="text-sm text-rose-600">{error}</p> : null}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import Link from 'next/link';
+import { Button } from '@/components/ui/button';
 
 export default function Home() {
   const { data: session, status } = useSession();
@@ -45,12 +46,9 @@ export default function Home() {
             </div>
 
             {/* Sign In Button */}
-            <Link
-              href="/login"
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 transition-colors duration-200"
-            >
-              Sign In
-            </Link>
+            <Button asChild className="rounded-lg">
+              <Link href="/login">Sign In</Link>
+            </Button>
           </div>
         </div>
       </nav>
@@ -78,15 +76,14 @@ export default function Home() {
             </p>
 
             {/* CTA Button */}
-            <Link
-              href="/login"
-              className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 transition-all duration-200 transform hover:scale-105 shadow-lg"
-            >
+            <Button asChild size="lg" className="rounded-xl shadow-lg">
+              <Link href="/login">
               Get Started
               <svg className="ml-2 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
               </svg>
-            </Link>
+              </Link>
+            </Button>
 
             {/* Stats */}
             <div className="flex flex-wrap gap-6 pt-4">

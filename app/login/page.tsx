@@ -3,9 +3,27 @@
 import { useEffect, useState } from 'react';
 import { signIn, useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+
+function getPasswordStrength(password: string) {
+  let score = 0;
+  if (password.length >= 8) score += 1;
+  if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score += 1;
+  if (/\d/.test(password) || /[^A-Za-z0-9]/.test(password)) score += 1;
+
+  if (score <= 1) {
+    return { label: 'Weak', barClassName: 'w-1/3 bg-rose-500', textClassName: 'text-rose-600' };
+  }
+  if (score === 2) {
+    return { label: 'Medium', barClassName: 'w-2/3 bg-amber-500', textClassName: 'text-amber-600' };
+  }
+  return { label: 'Strong', barClassName: 'w-full bg-emerald-500', textClassName: 'text-emerald-600' };
+}
 
 export default function LoginPage() {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
   const [isSignUp, setIsSignUp] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -15,6 +33,7 @@ export default function LoginPage() {
   });
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const passwordStrength = getPasswordStrength(formData.password);
 
   useEffect(() => {
     if (status === 'authenticated') {
@@ -72,7 +91,8 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 via-white to-blue-50 px-4">
       <div className="max-w-md w-full">
         {/* Card Wrapper */}
-        <div className="bg-white shadow-xl rounded-lg border border-gray-100 p-8">
+        <Card className="shadow-xl">
+          <CardContent className="p-8">
           {/* HealthAI Logo */}
           <div className="flex justify-center mb-8">
             <div className="flex items-center space-x-2">
@@ -98,51 +118,71 @@ export default function LoginPage() {
           <form className="space-y-6" onSubmit={isSignUp ? handleSignUp : handleSignIn}>
           {isSignUp && (
             <>
-              <input
+              <Input
                 name="name"
                 type="text"
                 required
-                className="block w-full px-3 py-2 border border-gray-300 rounded-lg placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-purple-500 focus:border-purple-500 transition-colors duration-200"
+                className="rounded-lg"
                 placeholder="Full Name"
                 value={formData.name}
                 onChange={handleChange}
               />
-              <input
+              <Input
                 name="hospitalName"
                 type="text"
                 required
-                className="block w-full px-3 py-2 border border-gray-300 rounded-lg placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-purple-500 focus:border-purple-500 transition-colors duration-200"
+                className="rounded-lg"
                 placeholder="Hospital Name"
                 value={formData.hospitalName}
                 onChange={handleChange}
               />
+              <div className="relative my-1">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-slate-200" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase tracking-[0.22em] text-slate-400">
+                  <span className="bg-white px-3">Account access</span>
+                </div>
+              </div>
             </>
           )}
-          <input
+          <Input
             name="email"
             type="email"
             required
-            className="block w-full px-3 py-2 border border-gray-300 rounded-lg placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-purple-500 focus:border-purple-500 transition-colors duration-200"
+            className="rounded-lg"
             placeholder="Email address"
             value={formData.email}
             onChange={handleChange}
           />
-          <input
+          <div className="space-y-2">
+          <Input
             name="password"
             type="password"
             required
-            className="block w-full px-3 py-2 border border-gray-300 rounded-lg placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-purple-500 focus:border-purple-500 transition-colors duration-200"
+            className="rounded-lg"
             placeholder="Password"
             value={formData.password}
             onChange={handleChange}
           />
-          <button
+          {isSignUp && formData.password ? (
+            <div className="space-y-2">
+              <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                <div className={`h-full rounded-full transition-all duration-300 ${passwordStrength.barClassName}`} />
+              </div>
+              <p className={`text-xs font-medium ${passwordStrength.textClassName}`}>
+                Password strength: {passwordStrength.label}
+              </p>
+            </div>
+          ) : null}
+          </div>
+          <Button
             type="submit"
             disabled={loading}
-            className="w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
+            className="w-full justify-center rounded-lg"
           >
             {loading ? 'Processing...' : (isSignUp ? 'Sign Up' : 'Sign In')}
-          </button>
+          </Button>
         </form>
         <div className="text-center mt-6">
           <button
@@ -152,7 +192,8 @@ export default function LoginPage() {
             {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
           </button>
         </div>
-        </div>
+        </CardContent>
+        </Card>
       </div>
     </div>
   );

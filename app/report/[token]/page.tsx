@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { use } from 'react';
-import LoadingSpinner from '@/components/LoadingSpinner';
 import AiReportDisplay from '@/components/AiReportDisplay';
+import LoadingSpinner from '@/components/LoadingSpinner';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface Patient {
   _id: string;
@@ -37,6 +39,28 @@ interface Patient {
   createdAt: string;
 }
 
+function getRiskVariant(riskLevel?: string) {
+  switch (riskLevel) {
+    case 'High':
+      return 'destructive' as const;
+    case 'Medium':
+      return 'warning' as const;
+    case 'Low':
+      return 'success' as const;
+    default:
+      return 'secondary' as const;
+  }
+}
+
+function getInitials(name: string) {
+  return name
+    .split(' ')
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+}
+
 export default function PublicReportPage({ params }: { params: Promise<{ token: string }> }) {
   const router = useRouter();
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -56,7 +80,7 @@ export default function PublicReportPage({ params }: { params: Promise<{ token: 
         } else {
           setError('Failed to load report');
         }
-      } catch (err) {
+      } catch {
         setError('Failed to load report');
       } finally {
         setLoading(false);
@@ -66,22 +90,9 @@ export default function PublicReportPage({ params }: { params: Promise<{ token: 
     fetchPatient();
   }, [token]);
 
-  const getRiskBadge = (riskLevel?: string) => {
-    switch (riskLevel) {
-      case 'Low':
-        return 'bg-green-100 text-green-800 border-green-200';
-      case 'Medium':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'High':
-        return 'bg-red-100 text-red-800 border-red-200';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center">
         <LoadingSpinner size="lg" text="Loading report..." />
       </div>
     );
@@ -89,22 +100,16 @@ export default function PublicReportPage({ params }: { params: Promise<{ token: 
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 2.502-2.502V6.838c0-1.54 1.667-2.502 2.502-2.502z" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Report Not Found</h1>
-          <p className="text-gray-600 mb-4">{error}</p>
-          <button
-            onClick={() => router.push('/')}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors duration-200"
-          >
-            Go to HealthAI
-          </button>
-        </div>
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <Card className="w-full max-w-xl text-center">
+          <CardHeader>
+            <CardTitle>Report unavailable</CardTitle>
+            <CardDescription>{error}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={() => router.push('/')}>Go to homepage</Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -114,112 +119,131 @@ export default function PublicReportPage({ params }: { params: Promise<{ token: 
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* HealthAI Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
-                </svg>
-              </div>
-              <span className="text-xl font-bold text-gray-900">HealthAI</span>
-            </div>
-            <button
-              onClick={() => router.push('/')}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200"
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+    <div className="min-h-screen">
+      <header className="border-b border-white/60 bg-white/85 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0ea5e9,#1d4ed8)] shadow-lg shadow-sky-200">
+              <svg className="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M3.172 5.172a4 4 0 0 1 5.656 0L10 6.343l1.172-1.171a4 4 0 1 1 5.656 5.656L10 17.657l-6.828-6.829a4 4 0 0 1 0-5.656Z"
+                  clipRule="evenodd"
+                />
               </svg>
-              Home
-            </button>
+            </div>
+            <div>
+              <p className="text-base font-semibold tracking-tight text-slate-950">HealthAI</p>
+              <p className="text-xs text-slate-500">Shared patient report</p>
+            </div>
           </div>
+          <Button variant="outline" onClick={() => router.push('/')}>
+            Home
+          </Button>
         </div>
       </header>
 
-      {/* Report Content */}
-      <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0 space-y-6">
-          {/* Patient Info Header */}
-          <div className="bg-white shadow-lg rounded-lg border border-gray-100">
-            <div className="p-6 sm:p-8">
-              <div className="flex items-start justify-between mb-6">
-                <div className="flex items-center space-x-4">
-                  <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-lg">
-                    {patient.name.split(' ').map(word => word[0]).join('').toUpperCase().slice(0, 2)}
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <section className="mb-8 grid gap-4 lg:grid-cols-[1.45fr,0.9fr]">
+          <Card className="overflow-hidden border-sky-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,249,255,0.98))]">
+            <CardContent className="p-6 sm:p-8">
+              <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-[linear-gradient(135deg,#38bdf8,#2563eb)] text-xl font-semibold text-white shadow-lg shadow-sky-200">
+                    {getInitials(patient.name)}
                   </div>
                   <div>
-                    <h1 className="text-2xl font-bold text-gray-900">{patient.name}</h1>
-                    <div className="flex items-center space-x-3 mt-2">
-                      <span className="text-sm text-gray-500">
-                        Age: {patient.age} | Gender: {patient.gender}
-                      </span>
-                      {patient.riskLevel && (
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getRiskBadge(patient.riskLevel)}`}>
-                          Risk Level: {patient.riskLevel}
-                        </span>
-                      )}
+                    <Badge variant="outline" className="mb-3 rounded-full px-3 py-1 text-[11px] tracking-[0.2em]">
+                      AI REPORT
+                    </Badge>
+                    <h1 className="text-3xl font-semibold tracking-tight text-slate-950">
+                      {patient.name}
+                    </h1>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Patient snapshot prepared for readable remote sharing.
+                    </p>
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <Badge variant={getRiskVariant(patient.riskLevel)}>
+                        {patient.riskLevel ? `${patient.riskLevel} risk` : 'Risk pending'}
+                      </Badge>
+                      <Badge variant="secondary">
+                        Generated {new Date(patient.createdAt).toLocaleDateString()}
+                      </Badge>
                     </div>
                   </div>
                 </div>
+                {patient.reportUrl ? (
+                  <Button asChild variant="secondary" className="rounded-xl">
+                    <a href={patient.reportUrl} target="_blank" rel="noopener noreferrer">
+                      View original PDF
+                    </a>
+                  </Button>
+                ) : null}
               </div>
+            </CardContent>
+          </Card>
 
-              <div className="border-t border-gray-200 pt-4">
-                <div className="text-sm text-gray-500">
-                  Report generated on: {new Date(patient.createdAt).toLocaleDateString()}
-                </div>
-              </div>
-            </div>
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Patient details</CardTitle>
+              <CardDescription>Core demographics included in the shared summary.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              <InfoRow label="Age" value={`${patient.age} years`} />
+              <InfoRow label="Gender" value={patient.gender} />
+              <InfoRow label="Email" value={patient.email} />
+              <InfoRow label="Phone" value={patient.phone} />
+            </CardContent>
+          </Card>
+        </section>
 
-          {/* AI Analysis Report */}
-          {patient.aiSummary && (
-            <AiReportDisplay
-              patientName={patient.name}
-              aiSummary={patient.aiSummary}
-              riskLevel={patient.riskLevel}
-              resultsNeedingAttention={patient.resultsNeedingAttention}
-              resultsThatNeedAttention={patient.resultsThatNeedAttention}
-              keyTakeaways={patient.keyTakeaways}
-              actionPlan={patient.actionPlan}
-              issues={patient.issues}
-              recommendations={patient.recommendations}
-              finalSummary={patient.finalSummary}
-            />
-          )}
+        {patient.aiSummary ? (
+          <Card>
+            <CardHeader className="border-b border-slate-100 pb-5">
+              <CardTitle>Readable AI summary</CardTitle>
+              <CardDescription>
+                A clean, shareable version of the report findings and recommendations.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <AiReportDisplay
+                patientName={patient.name}
+                aiSummary={patient.aiSummary}
+                riskLevel={patient.riskLevel}
+                resultsNeedingAttention={patient.resultsNeedingAttention}
+                resultsThatNeedAttention={patient.resultsThatNeedAttention}
+                keyTakeaways={patient.keyTakeaways}
+                actionPlan={patient.actionPlan}
+                issues={patient.issues}
+                recommendations={patient.recommendations}
+                finalSummary={patient.finalSummary}
+                keyTakeawaysIntro={patient.keyTakeawaysIntro}
+                keyTakeawaysClosing={patient.keyTakeawaysClosing}
+                actionPlanTitle={patient.actionPlanTitle}
+                actionPlanMarkdown={patient.actionPlanMarkdown}
+              />
+            </CardContent>
+          </Card>
+        ) : null}
 
-          {/* Disclaimer */}
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-6">
-            <div className="flex items-start space-x-3">
-              <div className="flex-shrink-0">
-                <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 2.502-2.502V6.838c0-1.54 1.667-2.502 2.502-2.502z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-amber-800 mb-2">Important Disclaimer</h3>
-                <p className="text-amber-700">
-                  This is AI-generated medical report analysis. While we strive for accuracy, 
-                  this analysis should not replace professional medical advice. Always consult 
-                  with a qualified healthcare professional for medical decisions and treatment.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+        <Card className="mt-8 border-amber-100 bg-amber-50/70">
+          <CardHeader>
+            <CardTitle>Important disclaimer</CardTitle>
+            <CardDescription>
+              This report is AI-generated and should be reviewed with a qualified healthcare professional.
+            </CardDescription>
+          </CardHeader>
+        </Card>
       </main>
+    </div>
+  );
+}
 
-      {/* Footer */}
-      <footer className="bg-white border-t border-gray-200 mt-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="text-center text-sm text-gray-500">
-            © 2026 HealthAI. All rights reserved. | Powered by AI Technology
-          </div>
-        </div>
-      </footer>
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+      <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className="mt-2 text-sm font-medium text-slate-900">{value}</p>
     </div>
   );
 }

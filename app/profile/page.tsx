@@ -5,18 +5,18 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import LoadingSpinner from '@/components/LoadingSpinner';
-import { useError } from '@/contexts/ErrorContext';
+import { Button } from '@/components/ui/button';
 
 export default function ProfilePage() {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const { showError } = useError();
   const [stats, setStats] = useState({
     totalPatients: 0,
     completedReports: 0,
     highRiskPatients: 0,
     thisMonthPatients: 0,
   });
+  const [memberSince, setMemberSince] = useState('N/A');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -40,6 +40,28 @@ export default function ProfilePage() {
     };
 
     fetchStats();
+  }, [session]);
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      if (!session) return;
+      try {
+        const res = await fetch('/api/profile');
+        if (!res.ok) return;
+        const data = await res.json();
+        const formatted = data?.createdAt
+          ? new Date(data.createdAt).toLocaleDateString('en-IN', {
+              month: 'long',
+              year: 'numeric',
+            })
+          : 'N/A';
+        setMemberSince(formatted);
+      } catch (error) {
+        console.error('Failed to fetch profile:', error);
+      }
+    };
+
+    fetchProfile();
   }, [session]);
 
   const handleSignOut = async () => {
@@ -100,7 +122,7 @@ export default function ProfilePage() {
                 <h2 className="text-2xl font-bold text-gray-900">{session.user.name}</h2>
                 <p className="text-gray-600">{session.user.email}</p>
                 <p className="text-sm text-gray-500 mt-1">
-                  Member since: {session.user.createdAt ? new Date(session.user.createdAt).toLocaleDateString() : 'Unknown'}
+                  Member since: {memberSince}
                 </p>
               </div>
             </div>
@@ -129,19 +151,21 @@ export default function ProfilePage() {
           <div className="bg-white shadow-lg rounded-lg border border-gray-100 p-6 sm:p-8">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Account Actions</h3>
             <div className="space-y-4">
-              <button 
+              <Button 
                 onClick={() => router.push('/edit-profile')}
-                className="w-full sm:w-auto px-6 py-3 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200"
+                variant="outline"
+                className="w-full sm:w-auto"
               >
                 <svg className="w-4 h-4 mr-2 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828L8.586-8.586z" />
                 </svg>
                 Edit Profile
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={handleSignOut}
                 disabled={loading}
-                className="w-full sm:w-auto px-6 py-3 border border-transparent rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 transition-all duration-200"
+                variant="destructive"
+                className="w-full sm:w-auto"
               >
                 {loading ? (
                   <>
@@ -156,7 +180,7 @@ export default function ProfilePage() {
                     Sign Out
                   </>
                 )}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

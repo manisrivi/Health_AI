@@ -6,7 +6,11 @@ import { useEffect, useState } from 'react';
 import { use } from 'react';
 import Navbar from '@/components/Navbar';
 import LoadingSpinner from '@/components/LoadingSpinner';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { useError } from '@/contexts/ErrorContext';
+import { toast } from 'sonner';
 
 interface Patient {
   _id: string;
@@ -82,7 +86,7 @@ export default function EditPatientPage({ params }: { params: Promise<{ id: stri
       });
 
       if (res.ok) {
-        showError('Patient updated successfully', 'success');
+        toast.success('Patient updated successfully');
         router.push('/dashboard');
       } else {
         throw new Error('Failed to update patient');
@@ -132,22 +136,26 @@ export default function EditPatientPage({ params }: { params: Promise<{ id: stri
           </div>
 
           {/* Form */}
-          <div className="bg-white shadow-lg rounded-lg border border-gray-100">
-            <div className="p-6 sm:p-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Edit patient details</CardTitle>
+              <CardDescription>Update the patient record without changing existing report history.</CardDescription>
+            </CardHeader>
+            <CardContent>
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
                       Full Name
                     </label>
-                    <input
+                    <Input
                       type="text"
                       id="name"
                       name="name"
                       required
                       value={formData.name}
                       onChange={handleChange}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-lg placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-purple-500 focus:border-purple-500 transition-colors duration-200"
+                      className="rounded-lg"
                       placeholder="Enter patient name"
                     />
                   </div>
@@ -156,14 +164,14 @@ export default function EditPatientPage({ params }: { params: Promise<{ id: stri
                     <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
                       Phone Number
                     </label>
-                    <input
+                    <Input
                       type="tel"
                       id="phone"
                       name="phone"
                       required
                       value={formData.phone}
                       onChange={handleChange}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-lg placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-purple-500 focus:border-purple-500 transition-colors duration-200"
+                      className="rounded-lg"
                       placeholder="Enter phone number"
                     />
                   </div>
@@ -172,14 +180,14 @@ export default function EditPatientPage({ params }: { params: Promise<{ id: stri
                     <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
                       Email Address
                     </label>
-                    <input
+                    <Input
                       type="email"
                       id="email"
                       name="email"
                       required
                       value={formData.email}
                       onChange={handleChange}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-lg placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-purple-500 focus:border-purple-500 transition-colors duration-200"
+                      className="rounded-lg"
                       placeholder="Enter email address"
                     />
                   </div>
@@ -188,7 +196,7 @@ export default function EditPatientPage({ params }: { params: Promise<{ id: stri
                     <label htmlFor="age" className="block text-sm font-medium text-gray-700 mb-2">
                       Age
                     </label>
-                    <input
+                    <Input
                       type="number"
                       id="age"
                       name="age"
@@ -197,7 +205,7 @@ export default function EditPatientPage({ params }: { params: Promise<{ id: stri
                       max="120"
                       value={formData.age}
                       onChange={handleChange}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-lg placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-purple-500 focus:border-purple-500 transition-colors duration-200"
+                      className="rounded-lg"
                       placeholder="Enter age"
                     />
                   </div>
@@ -223,17 +231,18 @@ export default function EditPatientPage({ params }: { params: Promise<{ id: stri
                 </div>
 
                 <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => router.push('/dashboard')}
-                    className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200"
+                    className="rounded-lg"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="submit"
                     disabled={loading}
-                    className="px-6 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
+                    className="rounded-lg"
                   >
                     {loading ? (
                       <>
@@ -243,11 +252,11 @@ export default function EditPatientPage({ params }: { params: Promise<{ id: stri
                     ) : (
                       'Update Patient'
                     )}
-                  </button>
+                  </Button>
                 </div>
               </form>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         </div>
       </main>
     </div>

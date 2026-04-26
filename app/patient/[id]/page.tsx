@@ -1,11 +1,15 @@
 'use client';
 
+import { use, useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { use, useEffect, useState } from 'react';
+import jsPDF from 'jspdf';
 import AiReportDisplay from '@/components/AiReportDisplay';
-import Navbar from '@/components/Navbar';
 import LoadingSpinner from '@/components/LoadingSpinner';
+import Navbar from '@/components/Navbar';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useError } from '@/contexts/ErrorContext';
 
 interface Patient {
@@ -39,12 +43,35 @@ interface Patient {
   createdAt: string;
 }
 
+function getRiskVariant(riskLevel?: string) {
+  switch (riskLevel) {
+    case 'High':
+      return 'destructive' as const;
+    case 'Medium':
+      return 'warning' as const;
+    case 'Low':
+      return 'success' as const;
+    default:
+      return 'secondary' as const;
+  }
+}
+
+function getInitials(name: string) {
+  return name
+    .split(' ')
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+}
+
 export default function PatientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { data: session, status } = useSession();
   const router = useRouter();
   const { showError } = useError();
   const [patient, setPatient] = useState<Patient | null>(null);
   const [isFetching, setIsFetching] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const { id } = use(params);
 
   const handleDownloadReport = async () => {
@@ -54,55 +81,109 @@ export default function PatientDetailPage({ params }: { params: Promise<{ id: st
     }
 
     try {
-      // Create a simple text report from AI summary
-      const reportContent = `
-HealthAI Medical Report Analysis
-=====================================
+      setIsGeneratingPdf(true);
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 40;
+      let y = margin;
 
-Patient: ${patient.name}
-Age: ${patient.age} | Gender: ${patient.gender}
-Report Date: ${new Date(patient.createdAt).toLocaleDateString()}
+      const addWrappedText = (
+        text: string,
+        options?: { fontSize?: number; color?: [number, number, number]; gap?: number }
+      ) => {
+        doc.setFontSize(options?.fontSize ?? 11);
+        if (options?.color) {
+          doc.setTextColor(...options.color);
+        } else {
+          doc.setTextColor(51, 65, 85);
+        }
+        const lines = doc.splitTextToSize(text, pageWidth - margin * 2);
+        lines.forEach((line: string) => {
+          if (y > pageHeight - margin) {
+            doc.addPage();
+            y = margin;
+          }
+          doc.text(line, margin, y);
+          y += (options?.fontSize ?? 11) + 5;
+        });
+        y += options?.gap ?? 8;
+      };
 
-Risk Level: ${patient.riskLevel}
+      const addList = (items: string[]) => {
+        items.filter(Boolean).forEach((item) => addWrappedText(`• ${item}`));
+      };
 
-AI Analysis Summary:
-${patient.aiSummary}
+      doc.setFillColor(124, 58, 237);
+      doc.roundedRect(margin, y, pageWidth - margin * 2, 92, 18, 18, 'F');
+      doc.setFillColor(255, 255, 255);
+      doc.circle(margin + 26, y + 28, 15, 'F');
+      doc.setTextColor(124, 58, 237);
+      doc.setFontSize(16);
+      doc.text('H+', margin + 17, y + 33);
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(22);
+      doc.text('HealthAI', margin + 52, y + 30);
+      doc.setFontSize(11);
+      doc.text('AI Healthcare Report Analyzer', margin + 52, y + 48);
+      doc.setFontSize(13);
+      doc.text(`Patient: ${patient.name}`, margin + 52, y + 72);
+      doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin - 140, y + 72);
+      y += 120;
 
-${patient.issues && patient.issues.length > 0 ? `
-Issues Found:
-${patient.issues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}
-` : ''}
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(16);
+      doc.text(`Risk Level: ${patient.riskLevel || 'Not assessed'}`, margin, y);
+      y += 28;
 
-${patient.recommendations && patient.recommendations.length > 0 ? `
-Recommendations:
-${patient.recommendations.map((rec, index) => `${index + 1}. ${rec}`).join('\n')}
-` : ''}
+      doc.setFontSize(14);
+      doc.text('AI Summary', margin, y);
+      y += 18;
+      addWrappedText(patient.aiSummary, { gap: 12 });
 
-${patient.finalSummary ? `
-Final Summary:
-${patient.finalSummary}
-` : ''}
+      if (patient.issues?.length) {
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(14);
+        doc.text('Key Issues', margin, y);
+        y += 18;
+        addList(patient.issues);
+      }
 
----
-This report was generated by HealthAI AI Analysis
-Generated on: ${new Date().toLocaleDateString()}
-Disclaimer: This is AI-generated analysis and should not replace professional medical advice.
-      `.trim();
+      if (patient.recommendations?.length) {
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(14);
+        doc.text('Recommendations', margin, y);
+        y += 18;
+        addList(patient.recommendations);
+      }
 
-      // Create blob and download
-      const blob = new Blob([reportContent], { type: 'text/plain' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${patient.name.replace(/\s+/g, '_')}_HealthAI_Report.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      
+      if (patient.actionPlan?.length) {
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(14);
+        doc.text(patient.actionPlanTitle || 'Action Plan', margin, y);
+        y += 18;
+        addList(patient.actionPlan);
+      }
+
+      if (patient.finalSummary) {
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(14);
+        doc.text('Final Summary', margin, y);
+        y += 18;
+        addWrappedText(patient.finalSummary, { gap: 12 });
+      }
+
+      addWrappedText(
+        'This report is for informational purposes only and does not replace professional medical advice.',
+        { fontSize: 10, color: [100, 116, 139], gap: 0 }
+      );
+
+      doc.save(`${patient.name.replace(/\s+/g, '_')}_HealthAI_Report.pdf`);
       showError('Report downloaded successfully', 'success');
-    } catch (error) {
+    } catch {
       showError('Failed to download report', 'error');
+    } finally {
+      setIsGeneratingPdf(false);
     }
   };
 
@@ -131,7 +212,7 @@ Disclaimer: This is AI-generated analysis and should not replace professional me
 
   if (status === 'loading' || isFetching || !patient) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center">
         <LoadingSpinner size="lg" text="Loading patient details..." />
       </div>
     );
@@ -141,234 +222,135 @@ Disclaimer: This is AI-generated analysis and should not replace professional me
     return null;
   }
 
-  const getRiskBadge = (riskLevel?: string) => {
-    switch (riskLevel) {
-      case 'Low':
-        return 'bg-green-100 text-green-800 border-green-200';
-      case 'Medium':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'High':
-        return 'bg-red-100 text-red-800 border-red-200';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const getInitials = (name: string) => {
-    return name
-      .split(' ')
-      .map(word => word[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  };
-
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen">
       <Navbar />
-      
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0 space-y-6">
-          
-          {/* Header with Back Button */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-4 space-y-4 sm:space-y-0">
-            <button
-              onClick={() => router.back()}
-              className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 w-full sm:w-auto"
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-              Back
-            </button>
-            <div className="text-center sm:text-left">
-              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Patient Details</h1>
-              <p className="text-gray-600">View patient information and AI analysis</p>
-            </div>
-          </div>
 
-          {/* Patient Information Card */}
-          <div className="bg-white shadow-lg rounded-lg border border-gray-100">
-            <div className="p-6 sm:p-8">
-              <div className="flex items-start justify-between mb-6">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-4 space-y-4 sm:space-y-0">
-                  <div className="flex items-center space-x-4">
-                    <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-lg">
-                      {getInitials(patient.name)}
-                    </div>
-                    <div>
-                      <h2 className="text-xl sm:text-2xl font-bold text-gray-900">{patient.name}</h2>
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-3 mt-2 space-y-1 sm:space-y-0">
-                        <span className="text-sm text-gray-500">Patient ID: {patient._id.slice(-8)}</span>
-                        {patient.riskLevel && (
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getRiskBadge(patient.riskLevel)}`}>
-                            Risk: {patient.riskLevel}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex flex-col sm:flex-row sm:space-x-2 space-y-2 sm:space-y-0 w-full sm:w-auto">
-                    {patient.reportUrl && (
-                      <a
-                        href={patient.reportUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 w-full sm:w-auto justify-center"
-                      >
-                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        View Original Report
-                      </a>
-                    )}
-                    <button 
-                      onClick={handleDownloadReport}
-                      className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 transition-colors duration-200 w-full sm:w-auto justify-center"
-                    >
-                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      Download AI Report
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500">Phone</p>
-                      <p className="font-medium text-gray-900">{patient.phone}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500">Email</p>
-                      <p className="font-medium text-gray-900">{patient.email}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500">Age</p>
-                      <p className="font-medium text-gray-900">{patient.age} years</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500">Gender</p>
-                      <p className="font-medium text-gray-900">{patient.gender}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500">Status</p>
-                      <p className="font-medium text-gray-900">{patient.status}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500">Created</p>
-                      <p className="font-medium text-gray-900">{new Date(patient.createdAt).toLocaleDateString()}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* AI Analysis Section */}
-          {patient.status === 'Completed' && (
-            <div className="bg-white shadow-lg rounded-lg border border-gray-100">
-              <div className="border-b border-gray-200 px-6 py-5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
-                      <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                      </svg>
-                      AI Analysis Report
-                    </h3>
-                    <p className="mt-1 text-sm text-gray-500">
-                      Plain-language summary only — not a diagnosis. Always confirm with a clinician.
-                    </p>
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    Analysis completed on {new Date(patient.createdAt).toLocaleDateString()}
-                  </div>
-                </div>
-              </div>
-              <div className="p-6">
-                <AiReportDisplay
-                  patientName={patient.name}
-                  aiSummary={patient.aiSummary}
-                  riskLevel={patient.riskLevel}
-                  resultsNeedingAttention={patient.resultsNeedingAttention}
-                  resultsThatNeedAttention={patient.resultsThatNeedAttention}
-                  keyTakeawaysIntro={patient.keyTakeawaysIntro}
-                  keyTakeaways={patient.keyTakeaways}
-                  keyTakeawaysClosing={patient.keyTakeawaysClosing}
-                  actionPlanTitle={patient.actionPlanTitle}
-                  actionPlanMarkdown={patient.actionPlanMarkdown}
-                  actionPlan={patient.actionPlan}
-                  finalSummary={patient.finalSummary}
-                  keyIssues={patient.issues}
-                  issues={patient.issues}
-                  quickRecommendations={patient.recommendations}
-                  recommendations={patient.recommendations}
-                />
-              </div>
-            </div>
-          )}
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-4">
+          <Button variant="outline" onClick={() => router.push('/dashboard')} className="rounded-xl">
+            ← Back to Dashboard
+          </Button>
         </div>
+        <section className="mb-8 grid gap-4 lg:grid-cols-[1.55fr,0.85fr]">
+          <Card className="overflow-hidden border-sky-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,249,255,0.98))]">
+            <CardContent className="flex flex-col gap-6 p-6 sm:p-8">
+              <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-[linear-gradient(135deg,#38bdf8,#2563eb)] text-xl font-semibold text-white shadow-lg shadow-sky-200">
+                    {getInitials(patient.name)}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-sky-700">Patient overview</p>
+                    <h1 className="text-3xl font-semibold tracking-tight text-slate-950">
+                      {patient.name}
+                    </h1>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <Badge variant="outline">ID {patient._id.slice(-8)}</Badge>
+                      <Badge variant={getRiskVariant(patient.riskLevel)}>
+                        {patient.riskLevel ? `${patient.riskLevel} risk` : 'Risk pending'}
+                      </Badge>
+                      <Badge variant={patient.status === 'Completed' ? 'success' : 'warning'}>
+                        {patient.status}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-3 sm:min-w-52">
+                  {patient.reportUrl ? (
+                    <Button asChild variant="secondary" className="rounded-xl">
+                      <a href={patient.reportUrl} target="_blank" rel="noopener noreferrer">
+                        View original report
+                      </a>
+                    </Button>
+                  ) : null}
+                  <Button className="rounded-xl" onClick={handleDownloadReport} disabled={isGeneratingPdf}>
+                    {isGeneratingPdf ? (
+                      <>
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                        Generating PDF...
+                      </>
+                    ) : (
+                      'Download AI report'
+                    )}
+                  </Button>
+                </div>
+              </div>
+              <p className="max-w-3xl text-sm leading-6 text-slate-600">
+                Review patient demographics, AI findings, and follow-up guidance in a format that
+                stays easy to scan during clinical workflows.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Quick facts</CardTitle>
+              <CardDescription>Core patient information at a glance.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+              <InfoTile label="Phone" value={patient.phone} />
+              <InfoTile label="Email" value={patient.email} />
+              <InfoTile label="Age" value={`${patient.age} years`} />
+              <InfoTile label="Gender" value={patient.gender} />
+              <InfoTile label="Created" value={new Date(patient.createdAt).toLocaleDateString()} />
+            </CardContent>
+          </Card>
+        </section>
+
+        {patient.status === 'Completed' ? (
+          <Card>
+            <CardHeader className="border-b border-slate-100 pb-5">
+              <CardTitle>AI clinical summary</CardTitle>
+              <CardDescription>
+                Plain-language findings for faster patient review. This is not a diagnosis.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <AiReportDisplay
+                patientName={patient.name}
+                aiSummary={patient.aiSummary}
+                riskLevel={patient.riskLevel}
+                resultsNeedingAttention={patient.resultsNeedingAttention}
+                resultsThatNeedAttention={patient.resultsThatNeedAttention}
+                keyTakeawaysIntro={patient.keyTakeawaysIntro}
+                keyTakeaways={patient.keyTakeaways}
+                keyTakeawaysClosing={patient.keyTakeawaysClosing}
+                actionPlanTitle={patient.actionPlanTitle}
+                actionPlanMarkdown={patient.actionPlanMarkdown}
+                actionPlan={patient.actionPlan}
+                issues={patient.issues}
+                recommendations={patient.recommendations}
+                finalSummary={patient.finalSummary}
+              />
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Analysis in progress</CardTitle>
+              <CardDescription>
+                The uploaded PDF is still being processed. Refresh this page in a moment.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-3 rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" />
+                AI analysis has not completed yet for this patient.
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </main>
+    </div>
+  );
+}
+
+function InfoTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+      <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className="mt-2 text-sm font-medium text-slate-900">{value}</p>
     </div>
   );
 }

@@ -3,6 +3,8 @@
 import { useSession, signOut } from 'next-auth/react';
 import { useState } from 'react';
 import Link from 'next/link';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 
 export default function Navbar() {
   const { data: session } = useSession();
@@ -19,73 +21,74 @@ export default function Navbar() {
   };
 
   return (
-    <nav className="bg-white shadow-sm border-b border-gray-100 sticky top-0 z-50">
+    <nav className="sticky top-0 z-50 border-b border-white/60 bg-white/85 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
+          <Link href={session ? '/dashboard' : '/'} className="flex items-center space-x-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0ea5e9,#1d4ed8)] shadow-lg shadow-sky-200">
               <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
               </svg>
             </div>
-            <span className="text-xl font-bold text-gray-900">HealthAI</span>
-          </div>
+            <div>
+              <span className="block text-base font-semibold tracking-tight text-slate-950">HealthAI</span>
+              <span className="block text-xs text-slate-500">Clinical report workspace</span>
+            </div>
+          </Link>
 
           {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center space-x-4">
+          <div className="hidden md:flex items-center space-x-3">
             {session ? (
               <>
-                <Link
-                  href="/add-patient"
-                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors duration-200"
-                >
-                  Add Patient
-                </Link>
+                <Button asChild className="rounded-xl">
+                  <Link href="/add-patient">Add Patient</Link>
+                </Button>
                 
                 {/* User Dropdown */}
                 <div className="relative">
                   <button
                     onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                    className="flex items-center space-x-3 text-sm rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200"
+                    className="flex items-center space-x-3 rounded-2xl border border-slate-200 bg-white px-2 py-1.5 text-sm shadow-sm transition hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-200"
                   >
-                    <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold shadow-sm">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[linear-gradient(135deg,#38bdf8,#2563eb)] text-sm font-semibold text-white">
                       {getInitials(session.user.name || 'User')}
                     </div>
-                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className="text-left">
+                      <p className="max-w-28 truncate text-sm font-medium text-slate-900">{session.user.name}</p>
+                      <p className="max-w-28 truncate text-xs text-slate-500">{session.user.email}</p>
+                    </div>
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
 
                   {isDropdownOpen && (
-                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-50">
-                      <div className="px-4 py-2 border-b border-gray-100">
-                        <p className="text-sm font-medium text-gray-900">{session.user.name}</p>
-                        <p className="text-xs text-gray-500 truncate">{session.user.email}</p>
+                    <Card className="absolute right-0 mt-3 w-56 overflow-hidden p-2">
+                      <div className="rounded-xl bg-slate-50 px-3 py-3">
+                        <p className="text-sm font-medium text-slate-900">{session.user.name}</p>
+                        <p className="truncate text-xs text-slate-500">{session.user.email}</p>
                       </div>
                       <Link
                         href="/profile"
-                        className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors duration-200"
+                        className="mt-2 block rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
                       >
                         Profile
                       </Link>
                       <button
                         onClick={() => signOut()}
-                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors duration-200"
+                        className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50"
                       >
                         Sign Out
                       </button>
-                    </div>
+                    </Card>
                   )}
                 </div>
               </>
             ) : (
-              <Link
-                href="/login"
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors duration-200"
-              >
-                Sign In
-              </Link>
+              <Button asChild>
+                <Link href="/login">Sign In</Link>
+              </Button>
             )}
           </div>
 
@@ -93,7 +96,7 @@ export default function Navbar() {
           <div className="md:hidden">
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+              className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-sky-200"
             >
               <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 {isMobileMenuOpen ? (
@@ -108,25 +111,25 @@ export default function Navbar() {
 
         {/* Mobile Menu */}
         {isMobileMenuOpen && (
-          <div className="md:hidden border-t border-gray-200">
+          <div className="md:hidden border-t border-slate-200 py-3">
             <div className="px-2 pt-2 pb-3 space-y-1">
               {session ? (
                 <>
                   <Link
                     href="/add-patient"
-                    className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
+                    className="block rounded-xl px-3 py-2 text-base font-medium text-slate-700 hover:bg-slate-50"
                     onClick={() => setIsMobileMenuOpen(false)}
                   >
                     Add Patient
                   </Link>
-                  <div className="border-t border-gray-200 pt-2">
-                    <div className="px-3 py-2">
-                      <p className="text-sm font-medium text-gray-900">{session.user.name}</p>
-                      <p className="text-xs text-gray-500">{session.user.email}</p>
+                  <div className="border-t border-slate-200 pt-3">
+                    <div className="rounded-xl bg-slate-50 px-3 py-3">
+                      <p className="text-sm font-medium text-slate-900">{session.user.name}</p>
+                      <p className="text-xs text-slate-500">{session.user.email}</p>
                     </div>
                     <Link
                       href="/profile"
-                      className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
+                      className="mt-2 block rounded-xl px-3 py-2 text-base font-medium text-slate-700 hover:bg-slate-50"
                       onClick={() => setIsMobileMenuOpen(false)}
                     >
                       Profile
@@ -136,20 +139,18 @@ export default function Navbar() {
                         signOut();
                         setIsMobileMenuOpen(false);
                       }}
-                      className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
+                      className="block w-full rounded-xl px-3 py-2 text-left text-base font-medium text-slate-700 hover:bg-slate-50"
                     >
                       Sign Out
                     </button>
                   </div>
                 </>
               ) : (
-                <Link
-                  href="/login"
-                  className="block px-3 py-2 rounded-md text-base font-medium text-white bg-blue-600 hover:bg-blue-700"
-                  onClick={() => setIsMobileMenuOpen(false)}
-                >
-                  Sign In
-                </Link>
+                <Button asChild className="w-full justify-center">
+                  <Link href="/login" onClick={() => setIsMobileMenuOpen(false)}>
+                    Sign In
+                  </Link>
+                </Button>
               )}
             </div>
           </div>

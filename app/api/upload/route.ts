@@ -3,10 +3,12 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import dbConnect from '@/lib/db';
 import Patient from '@/models/Patient';
+import User from '@/models/User';
 import { v2 as cloudinary } from 'cloudinary';
-import { GoogleGenerativeAI, SchemaType, type ResponseSchema } from '@google/generative-ai';
 // const pdfjsLib = require('pdfjs-dist');
 import { sendEmail, generateReportEmailTemplate } from '@/lib/email';
+
+export const runtime = 'nodejs';
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -14,76 +16,91 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
+const geminiApiKey = process.env.GEMINI_API_KEY?.trim() || '';
 const geminiModelCandidates = [
   process.env.GEMINI_MODEL,
-  'gemini-flash-latest',
+  'gemini-2.5-flash',
   'gemini-2.0-flash',
   'gemini-1.5-flash',
-].filter((model): model is string => Boolean(model));
+].filter((model): model is string => Boolean(model)).filter((model, index, all) => all.indexOf(model) === index);
 
-/** Enforces JSON shape in Gemini; server-side normalizeAiResponse still pads if parsing fails. */
-const labReportJsonSchema: ResponseSchema = {
-  type: SchemaType.OBJECT,
+const labReportJsonSchema = {
+  type: 'object',
   properties: {
-    overview: {
-      type: SchemaType.STRING,
-      description:
-        'One detailed paragraph: overall health picture for this patient based only on the lab text; cite values when present.',
-    },
     riskLevel: {
-      type: SchemaType.STRING,
-      format: 'enum',
-      enum: ['Low', 'Medium', 'High'],
+      type: 'string',
+      enum: ['low', 'medium', 'high'],
+    },
+    overview: {
+      type: 'string',
+      description:
+        '2-3 sentence summary mentioning specific values found in the report.',
     },
     resultsNeedingAttention: {
-      type: SchemaType.ARRAY,
-      maxItems: 3,
-      items: { type: SchemaType.STRING },
+      type: 'array',
+      maxItems: 5,
+      items: {
+        type: 'object',
+        properties: {
+          finding: { type: 'string' },
+          severity: {
+            type: 'string',
+            enum: ['high', 'medium', 'normal'],
+          },
+          explanation: { type: 'string' },
+        },
+        required: ['finding', 'severity', 'explanation'],
+      },
       description:
-        'ALWAYS provide 1-3 meaningful lines: abnormal results, notable findings, OR if normal, state what was reviewed and that values appear within normal ranges.',
+        'List of report findings with exact values and a short explanation.',
     },
     keyTakeaways: {
-      type: SchemaType.ARRAY,
+      type: 'array',
       maxItems: 8,
-      items: { type: SchemaType.STRING },
-      description:
-        'ALWAYS provide 2-5 clear takeaways about the lab results, even if they indicate normal findings.',
+      items: { type: 'string' },
+      description: 'Specific takeaways with actual numbers where possible.',
     },
     actionPlan: {
-      type: SchemaType.ARRAY,
+      type: 'array',
       maxItems: 12,
-      items: { type: SchemaType.STRING },
-      description:
-        'ALWAYS provide 3-6 concrete next steps: follow-up, lifestyle, or when to see clinician.',
+      items: { type: 'string' },
+      description: 'Specific actionable next steps.',
     },
     keyIssues: {
-      type: SchemaType.ARRAY,
+      type: 'array',
       maxItems: 10,
-      items: { type: SchemaType.STRING },
-      description:
-        'ALWAYS provide 1-3 health themes or observations from the report (use "General health appears stable" if no issues found).',
+      items: {
+        type: 'object',
+        properties: {
+          issue: { type: 'string' },
+          severity: {
+            type: 'string',
+            enum: ['critical', 'moderate', 'minor'],
+          },
+        },
+        required: ['issue', 'severity'],
+      },
+      description: 'Specific issues with a severity level.',
     },
-    quickRecommendations: {
-      type: SchemaType.ARRAY,
+    recommendations: {
+      type: 'array',
       maxItems: 10,
-      items: { type: SchemaType.STRING },
-      description:
-        'ALWAYS provide 2-4 practical recommendations based on the report findings.',
+      items: { type: 'string' },
+      description: 'Specific practical recommendations.',
     },
     finalSummary: {
-      type: SchemaType.STRING,
-      description: 'Closing paragraph: priorities, follow-up, not a diagnosis.',
+      type: 'string',
+      description: '2-3 sentence conclusion with specific values and clear next steps.',
     },
   },
   required: [
-    'overview',
     'riskLevel',
+    'overview',
     'resultsNeedingAttention',
     'keyTakeaways',
     'actionPlan',
     'keyIssues',
-    'quickRecommendations',
+    'recommendations',
     'finalSummary',
   ],
 };
@@ -118,6 +135,125 @@ function extractJsonFromModelText(text: string) {
   return JSON.parse(cleaned);
 }
 
+function extractGeminiText(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return '';
+  const candidate = Array.isArray((payload as { candidates?: unknown[] }).candidates)
+    ? (payload as { candidates: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates[0]
+    : undefined;
+  const parts = candidate?.content?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('\n')
+    .trim();
+}
+
+function extractGeminiErrorMessage(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return '';
+  const error = (payload as { error?: { message?: unknown } }).error;
+  return typeof error?.message === 'string' ? error.message : '';
+}
+
+async function generateGeminiJson({
+  modelName,
+  prompt,
+  base64PdfData,
+  extractedText,
+  useSchema,
+}: {
+  modelName: string;
+  prompt: string;
+  base64PdfData: string;
+  extractedText: string;
+  useSchema: boolean;
+}) {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`;
+  const generationConfig = useSchema
+    ? {
+        responseMimeType: 'application/json',
+        responseJsonSchema: labReportJsonSchema,
+      }
+    : {
+        responseMimeType: 'application/json',
+      };
+
+  const requestBodies = [
+    {
+      contents: [
+        {
+          parts: [
+            {
+              inline_data: {
+                mime_type: 'application/pdf',
+                data: base64PdfData,
+              },
+            },
+            { text: prompt },
+          ],
+        },
+      ],
+      generationConfig,
+    },
+  ];
+
+  if (extractedText.trim()) {
+    requestBodies.push({
+      contents: [
+        {
+          parts: [
+            {
+              text: `${prompt}\n\nExtracted report text:\n${extractedText.slice(0, 120000)}`,
+            },
+          ],
+        },
+      ],
+      generationConfig,
+    });
+  }
+
+  let lastError: Error | null = null;
+
+  for (const body of requestBodies) {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': geminiApiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const payload = (await response.json().catch(() => null)) as unknown;
+
+    if (!response.ok) {
+      const error = new Error(
+        extractGeminiErrorMessage(payload) || `Gemini request failed with status ${response.status}`
+      ) as Error & { status?: number };
+      error.status = response.status;
+      lastError = error;
+      continue;
+    }
+
+    const text = extractGeminiText(payload);
+    if (!text) {
+      const error = new Error('Gemini returned no text content') as Error & { status?: number };
+      error.status = 502;
+      lastError = error;
+      continue;
+    }
+
+    return extractJsonFromModelText(text);
+  }
+
+  throw lastError ?? new Error('Gemini request failed');
+}
+
+function extractTopText(value: string | undefined, maxLength = 220) {
+  if (!value) return '';
+  const trimmed = value.replace(/\s+/g, ' ').trim();
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength).trim()}...` : trimmed;
+}
+
 type NormalizedAi = {
   overview: string;
   riskLevel: 'Low' | 'Medium' | 'High';
@@ -131,6 +267,12 @@ type NormalizedAi = {
 
 function coerceRiskLevel(value: unknown): 'Low' | 'Medium' | 'High' {
   if (value === 'Low' || value === 'Medium' || value === 'High') return value;
+  if (typeof value === 'string') {
+    const normalized = value.toLowerCase();
+    if (normalized === 'low') return 'Low';
+    if (normalized === 'medium') return 'Medium';
+    if (normalized === 'high') return 'High';
+  }
   return 'Low';
 }
 
@@ -157,6 +299,21 @@ function linesFromMixedArray(raw: unknown, minLen: number, fallbacks: string[]):
       }
       if (item && typeof item === 'object') {
         const o = item as Record<string, unknown>;
+        if ('finding' in o || 'severity' in o || 'explanation' in o) {
+          const finding = String(o.finding ?? '').trim();
+          const severity = String(o.severity ?? '').trim();
+          const explanation = String(o.explanation ?? '').trim();
+          const line = [finding, severity && `(${severity})`, explanation].filter(Boolean).join(' — ').trim();
+          if (line) out.push(line);
+          continue;
+        }
+        if ('issue' in o || 'severity' in o) {
+          const issue = String(o.issue ?? '').trim();
+          const severity = String(o.severity ?? '').trim();
+          const line = [severity && `${severity}:`, issue].filter(Boolean).join(' ').trim();
+          if (line) out.push(line);
+          continue;
+        }
         if ('testName' in o || 'result' in o) {
           const testName = String(o.testName ?? '');
           const result = String(o.result ?? o.yourValue ?? '');
@@ -184,7 +341,7 @@ function linesFromMixedArray(raw: unknown, minLen: number, fallbacks: string[]):
   return out;
 }
 
-function normalizeAiResponse(response: any, patientName: string): NormalizedAi {
+function normalizeAiResponse(response: unknown, patientName: string): NormalizedAi {
   const fallbackOverview = `Health overview for ${patientName}: AI could not fully analyze this upload. Please review the original lab document with your clinician.`;
   const fallbackFinal = `Summary for ${patientName}: This AI summary is informational only—not a diagnosis. Follow up with a qualified professional for medical decisions.`;
 
@@ -212,26 +369,27 @@ function normalizeAiResponse(response: any, patientName: string): NormalizedAi {
   };
 
   if (!response || typeof response !== 'object') return base;
+  const ai = response as Record<string, unknown>;
 
   const overviewRaw =
-    typeof response.overview === 'string' && response.overview.trim()
-      ? response.overview.trim()
-      : typeof response.summary === 'string' && response.summary.trim()
-        ? response.summary.trim()
+    typeof ai.overview === 'string' && ai.overview.trim()
+      ? ai.overview.trim()
+      : typeof ai.summary === 'string' && ai.summary.trim()
+        ? ai.summary.trim()
         : base.overview;
 
-  let resultsRaw = response.resultsNeedingAttention ?? response.results_needing_attention;
+  let resultsRaw = ai.resultsNeedingAttention ?? ai.results_needing_attention;
   if (!Array.isArray(resultsRaw) || resultsRaw.length === 0) {
-    resultsRaw = response.resultsThatNeedAttention;
+    resultsRaw = ai.resultsThatNeedAttention;
   }
   const resultsNeedingAttention = linesFromMixedArray(resultsRaw, 1, base.resultsNeedingAttention);
 
-  const keyTakeaways = linesFromMixedArray(response.keyTakeaways, 2, base.keyTakeaways);
+  const keyTakeaways = linesFromMixedArray(ai.keyTakeaways, 2, base.keyTakeaways);
 
-  let actionRaw = response.actionPlan;
+  let actionRaw = ai.actionPlan;
   if (!Array.isArray(actionRaw) || actionRaw.length < 3) {
     const md =
-      typeof response.actionPlanMarkdown === 'string' ? response.actionPlanMarkdown.trim() : '';
+      typeof ai.actionPlanMarkdown === 'string' ? ai.actionPlanMarkdown.trim() : '';
     if (md.length > 0) {
       const split = md
         .split(/\n(?=\s*(?:[-•]|\d+[\).]|\*\s)|🫀|🩺|💊|🏃|🥗)/u)
@@ -243,26 +401,26 @@ function normalizeAiResponse(response: any, patientName: string): NormalizedAi {
   const actionPlan = linesFromMixedArray(actionRaw, 3, base.actionPlan);
 
   const keyIssues = linesFromMixedArray(
-    response.keyIssues ?? response.issues,
+    ai.keyIssues ?? ai.issues,
     1,
     base.keyIssues
   );
   const quickRecommendations = linesFromMixedArray(
-    response.quickRecommendations ?? response.recommendations,
+    ai.quickRecommendations ?? ai.recommendations,
     2,
     base.quickRecommendations
   );
 
   const finalSummary =
-    typeof response.finalSummary === 'string' && response.finalSummary.trim()
-      ? response.finalSummary.trim()
-      : typeof response.final_summary === 'string' && response.final_summary.trim()
-        ? response.final_summary.trim()
+    typeof ai.finalSummary === 'string' && ai.finalSummary.trim()
+      ? ai.finalSummary.trim()
+      : typeof ai.final_summary === 'string' && ai.final_summary.trim()
+        ? ai.final_summary.trim()
         : base.finalSummary;
 
   return {
     overview: overviewRaw,
-    riskLevel: coerceRiskLevel(response.riskLevel),
+    riskLevel: coerceRiskLevel(ai.riskLevel),
     resultsNeedingAttention,
     keyTakeaways,
     actionPlan,
@@ -310,6 +468,7 @@ export async function POST(req: NextRequest) {
       _id: patientId,
       hospitalId: session.user.id,
     }).select('name');
+    const uploader = await User.findById(session.user.id).select('hospitalName name');
 
     if (!patientForPrompt) {
       console.log('❌ Patient not found for hospital:', { patientId, hospitalId: session.user.id });
@@ -335,15 +494,11 @@ export async function POST(req: NextRequest) {
       ).end(buffer);
     });
 
-    const reportUrl = (uploadResult as any).secure_url;
+    const reportUrl = (uploadResult as { secure_url?: string }).secure_url;
     console.log('✅ Cloudinary upload done:', reportUrl);
 
     console.log('5️⃣ Extracting PDF text...');
     const extracted = await extractPdfText(buffer);
-    const fallbackSnippet =
-      'Sample lab report text: Patient has normal blood count, cholesterol levels are high, recommend diet changes.';
-    const text =
-      extracted.length > 80 ? extracted.slice(0, 120_000) : fallbackSnippet;
     console.log('✅ PDF text extracted:', extracted.length, 'chars');
 
     const patientName = patientForPrompt?.name || 'Patient';
@@ -354,47 +509,71 @@ export async function POST(req: NextRequest) {
     let aiStatus: 'generated' | 'fallback' = 'fallback';
     let aiReason = 'ai_not_attempted';
 
-    // Send to Gemini AI, but do not fail upload if AI is unavailable.
-    if (genAI) {
-      const prompt = `You are a careful medical educator (not a doctor). Analyze the lab report text below for patient "${patientName}".
+    const analysisPrompt = `
+You are a clinical report analyzer. Analyze this medical report and return structured JSON.
 
-Tone: supportive and specific; cite numbers from the report when available. Never invent results not supported by the text.
+Extract ACTUAL values and numbers from the report — do not generalize.
 
-CRITICAL: You MUST provide meaningful content for ALL fields. Even if results are normal, still provide useful insights and recommendations. Never return empty arrays or null values.
+Return ONLY valid JSON, no markdown, no backticks, just raw JSON:
+{
+  "riskLevel": "low" | "medium" | "high",
+  "overview": "2-3 sentence summary mentioning specific values found",
+  "resultsNeedingAttention": [
+    {
+      "finding": "e.g. Cholesterol: 240 mg/dL (High)",
+      "severity": "high" | "medium" | "normal",
+      "explanation": "one sentence explanation"
+    }
+  ],
+  "keyTakeaways": [
+    "specific takeaway with actual numbers where possible"
+  ],
+  "actionPlan": [
+    "specific actionable step"
+  ],
+  "keyIssues": [
+    {
+      "issue": "specific issue description",
+      "severity": "critical" | "moderate" | "minor"
+    }
+  ],
+  "recommendations": [
+    "specific recommendation"
+  ],
+  "finalSummary": "2-3 sentence conclusion with specific values and clear next steps"
+}
 
-Output: your reply MUST be a single JSON object only (no markdown, no code fences, no text before or after). The response will be validated against a fixed schema: every key listed below must appear with a non-empty string or a non-empty array (never null, never []).
+Rules:
+- Always include actual lab values with units (mg/dL, g/dL, etc.) when found
+- Never say values were not listed — extract them from the document
+- If a value is truly missing say "Not reported in document"
+- Risk level must be based on actual findings not assumptions
+- Keep language clear for non-medical users
+`;
 
-Fields:
-- overview: string — one detailed paragraph on overall findings for ${patientName}.
-- riskLevel: exactly one of "Low", "Medium", "High" (clinical risk implied by the report text, not certainty).
-- resultsNeedingAttention: array of 1–3 strings — ALWAYS provide content: if abnormal, describe them; if normal, state "Reviewed values appear within normal ranges" or similar.
-- keyTakeaways: array of 2–5 strings — ALWAYS provide clear points about the report, even for normal results (e.g., "Overall health markers appear stable").
-- actionPlan: array of 3–6 strings — ALWAYS provide concrete next steps like "Schedule routine follow-up in 6 months" even for normal results.
-- keyIssues: array of 1–3 strings — ALWAYS provide observations; use "General health appears stable" if no specific issues.
-- quickRecommendations: array of 2–4 strings — ALWAYS give practical advice like "Maintain current healthy lifestyle" for normal results.
-- finalSummary: string — one closing paragraph: priorities and follow-up; state this is not a diagnosis.`;
+    if (geminiApiKey) {
+      const base64PdfData = buffer.toString('base64');
       for (const modelName of geminiModelCandidates) {
         try {
           let parsed: unknown;
           try {
-            const model = genAI.getGenerativeModel({
-              model: modelName,
-              generationConfig: {
-                responseMimeType: 'application/json',
-                responseSchema: labReportJsonSchema,
-              },
+            parsed = await generateGeminiJson({
+              modelName,
+              prompt: analysisPrompt,
+              base64PdfData,
+              extractedText: extracted,
+              useSchema: true,
             });
-            const result = await model.generateContent([prompt, text]);
-            parsed = extractJsonFromModelText((await result.response).text());
           } catch (inner: unknown) {
             const err = inner as { status?: number };
             if (err?.status === 400) {
-              const model = genAI.getGenerativeModel({
-                model: modelName,
-                generationConfig: { responseMimeType: 'application/json' },
+              parsed = await generateGeminiJson({
+                modelName,
+                prompt: analysisPrompt,
+                base64PdfData,
+                extractedText: extracted,
+                useSchema: false,
               });
-              const result = await model.generateContent([prompt, text]);
-              parsed = extractJsonFromModelText((await result.response).text());
             } else {
               throw inner;
             }
@@ -465,7 +644,9 @@ Fields:
 
     console.log('📧 ENTERING EMAIL SECTION — patient.email:', patient.email);
     // Send email with public URL and PDF attachment
-    const publicUrl = patient.publicToken ? `${process.env.NEXTAUTH_URL}/report/${patient.publicToken}` : null;
+    const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || '';
+    const publicUrl = patient.publicToken ? `${appBaseUrl}/report/${patient.publicToken}` : null;
+    const dashboardReportUrl = `${appBaseUrl}/patient/${patient._id}`;
 
     console.log('=== EMAIL DEBUG START ===');
     console.log('SMTP_HOST:', process.env.SMTP_HOST || 'NOT SET');
@@ -481,13 +662,15 @@ Fields:
     if (patient.email) {
       try {
         console.log('📧 CALLING sendEmail function...');
-        const emailHtml = generateReportEmailTemplate(
-          patient.name,
-          patient.email,
-          patient.riskLevel,
-          publicUrl,
-          reportUrl
-        );
+        const emailHtml = generateReportEmailTemplate({
+          patientName: patient.name,
+          riskLevel: patient.riskLevel,
+          reportUrl: publicUrl || dashboardReportUrl,
+          aiOverview: extractTopText(aiResponse.overview),
+          topFindings: aiResponse.resultsNeedingAttention.slice(0, 2),
+          topActionPlan: aiResponse.actionPlan.slice(0, 2),
+          hospitalName: uploader?.hospitalName || uploader?.name || 'HealthAI Partner',
+        });
 
         console.log('📧 Attempting to send email to:', patient.email);
 
