@@ -173,10 +173,29 @@ function isCloudinaryReportUrl(url: string, patientId: string) {
   }
 }
 
-async function downloadPdfFromCloudinary(reportUrl: string) {
-  const response = await fetch(reportUrl);
+function getCloudinaryPublicIdFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/\/raw\/upload\/(?:v\d+\/)?(.+)$/);
+    return match?.[1] ? decodeURIComponent(match[1]) : '';
+  } catch {
+    return '';
+  }
+}
+
+function isValidCloudinaryPublicId(publicId: string, patientId: string) {
+  return publicId === `reports/${patientId}.pdf` || publicId === `reports/${patientId}`;
+}
+
+async function fetchPdfBuffer(url: string) {
+  const response = await fetch(url);
   if (!response.ok) {
-    throw new Error('Uploaded report could not be downloaded for analysis');
+    const cloudinaryError = response.headers.get('x-cld-error');
+    const error = new Error(cloudinaryError || `Download failed with status ${response.status}`) as Error & {
+      status?: number;
+    };
+    error.status = response.status;
+    throw error;
   }
 
   const contentLength = Number(response.headers.get('content-length') || '0');
@@ -190,6 +209,26 @@ async function downloadPdfFromCloudinary(reportUrl: string) {
   }
 
   return Buffer.from(bytes);
+}
+
+async function downloadPdfFromCloudinary(reportUrl: string, publicId: string) {
+  try {
+    return await fetchPdfBuffer(reportUrl);
+  } catch (error) {
+    const status = (error as { status?: number })?.status;
+    if (status !== 401 && status !== 403) {
+      throw error;
+    }
+  }
+
+  const signedDownloadUrl = cloudinary.utils.private_download_url(publicId, '', {
+    resource_type: 'raw',
+    type: 'upload',
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+    attachment: false,
+  });
+
+  return fetchPdfBuffer(signedDownloadUrl);
 }
 
 async function generateGeminiJson({
@@ -483,6 +522,16 @@ function normalizeAiResponse(response: unknown, patientName: string): Normalized
   };
 }
 
+export async function GET() {
+  return NextResponse.json(
+    { error: 'Use the Add Patient form to upload reports. This endpoint accepts POST requests only.' },
+    {
+      status: 405,
+      headers: { Allow: 'POST' },
+    }
+  );
+}
+
 export async function POST(req: NextRequest) {
   console.log('\n========================================');
   console.log('🚀 UPLOAD ROUTE CALLED at:', new Date().toISOString());
@@ -496,12 +545,14 @@ export async function POST(req: NextRequest) {
     const contentType = req.headers.get('content-type') || '';
     let buffer: Buffer;
     let patientId: string;
+    let publicId: string | undefined;
     let reportUrl: string | undefined;
 
     if (contentType.includes('application/json')) {
       console.log('1️⃣  Received Cloudinary upload reference...');
       const body = await req.json();
       patientId = body.patientId;
+      publicId = body.publicId;
       reportUrl = body.reportUrl;
 
       if (!patientId || !reportUrl) {
@@ -511,9 +562,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Invalid report upload URL' }, { status: 400 });
       }
 
+      publicId = publicId || getCloudinaryPublicIdFromUrl(reportUrl);
+      if (!publicId || !isValidCloudinaryPublicId(publicId, patientId)) {
+        return NextResponse.json({ error: 'Invalid report upload ID' }, { status: 400 });
+      }
+
       console.log('2️⃣  Downloading uploaded PDF for analysis...');
-      buffer = await downloadPdfFromCloudinary(reportUrl);
-    } else {
+      buffer = await downloadPdfFromCloudinary(reportUrl, publicId);
+    } else if (contentType.includes('multipart/form-data')) {
       console.log('1️⃣  Received request, parsing FormData...');
       const formData = await req.formData();
       const file = formData.get('file') as File;
@@ -536,6 +592,11 @@ export async function POST(req: NextRequest) {
 
       const bytes = await file.arrayBuffer();
       buffer = Buffer.from(bytes);
+    } else {
+      return NextResponse.json(
+        { error: 'Unsupported upload request. Please upload from the Add Patient form.' },
+        { status: 415 }
+      );
     }
 
     console.log('3️⃣  Connecting to DB...');
@@ -787,6 +848,13 @@ Rules:
       }
       if (error.message.includes('ETIMEDOUT')) {
         return NextResponse.json({ error: 'Request timeout. Please try again' }, { status: 500 });
+      }
+      if (
+        error.message.includes('Uploaded report could not be downloaded') ||
+        error.message.includes('File size must be less than') ||
+        error.message.includes('Please upload a PDF file only')
+      ) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
       }
       return NextResponse.json({ error: error.message }, { status: 500 });
     }

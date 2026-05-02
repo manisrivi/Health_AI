@@ -208,6 +208,7 @@ export default function AddPatientPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             patientId: patient._id,
+            publicId: cloudinaryData.public_id || signatureData.publicId,
             reportUrl: cloudinaryData.secure_url,
           }),
         });

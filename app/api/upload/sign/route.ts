@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     }
 
     const timestamp = Math.round(Date.now() / 1000);
-    const publicId = `reports/${patientId}`;
+    const publicId = `reports/${patientId}.pdf`;
     const uploadParams = {
       overwrite: true,
       public_id: publicId,
