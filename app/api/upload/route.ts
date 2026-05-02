@@ -17,7 +17,7 @@ cloudinary.config({
 });
 
 const geminiApiKey = process.env.GEMINI_API_KEY?.trim() || '';
-const MAX_UPLOAD_FILE_SIZE_MB = 4;
+const MAX_UPLOAD_FILE_SIZE_MB = 20;
 const MAX_UPLOAD_FILE_SIZE_BYTES = MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024;
 const geminiModelCandidates = [
   process.env.GEMINI_MODEL,
@@ -154,6 +154,81 @@ function extractGeminiErrorMessage(payload: unknown): string {
   if (!payload || typeof payload !== 'object') return '';
   const error = (payload as { error?: { message?: unknown } }).error;
   return typeof error?.message === 'string' ? error.message : '';
+}
+
+function isCloudinaryReportUrl(url: string, patientId: string) {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  if (!cloudName) return false;
+
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === 'https:' &&
+      parsed.hostname === 'res.cloudinary.com' &&
+      parsed.pathname.includes(`/${cloudName}/raw/upload/`) &&
+      parsed.pathname.includes(`/reports/${patientId}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getCloudinaryPublicIdFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/\/raw\/upload\/(?:v\d+\/)?(.+)$/);
+    return match?.[1] ? decodeURIComponent(match[1]) : '';
+  } catch {
+    return '';
+  }
+}
+
+function isValidCloudinaryPublicId(publicId: string, patientId: string) {
+  return publicId === `reports/${patientId}.pdf` || publicId === `reports/${patientId}`;
+}
+
+async function fetchPdfBuffer(url: string) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const cloudinaryError = response.headers.get('x-cld-error');
+    const error = new Error(cloudinaryError || `Download failed with status ${response.status}`) as Error & {
+      status?: number;
+    };
+    error.status = response.status;
+    throw error;
+  }
+
+  const contentLength = Number(response.headers.get('content-length') || '0');
+  if (contentLength > MAX_UPLOAD_FILE_SIZE_BYTES) {
+    throw new Error(`File size must be less than ${MAX_UPLOAD_FILE_SIZE_MB}MB`);
+  }
+
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > MAX_UPLOAD_FILE_SIZE_BYTES) {
+    throw new Error(`File size must be less than ${MAX_UPLOAD_FILE_SIZE_MB}MB`);
+  }
+
+  return Buffer.from(bytes);
+}
+
+async function downloadPdfFromCloudinary(reportUrl: string, publicId: string) {
+  try {
+    return await fetchPdfBuffer(reportUrl);
+  } catch (error) {
+    const status = (error as { status?: number })?.status;
+    if (status !== 401 && status !== 403) {
+      throw error;
+    }
+  }
+
+  const signedDownloadUrl = cloudinary.utils.private_download_url(publicId, '', {
+    resource_type: 'raw',
+    type: 'upload',
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+    attachment: false,
+  });
+
+  return fetchPdfBuffer(signedDownloadUrl);
 }
 
 async function generateGeminiJson({
@@ -447,6 +522,16 @@ function normalizeAiResponse(response: unknown, patientName: string): Normalized
   };
 }
 
+export async function GET() {
+  return NextResponse.json(
+    { error: 'Use the Add Patient form to upload reports. This endpoint accepts POST requests only.' },
+    {
+      status: 405,
+      headers: { Allow: 'POST' },
+    }
+  );
+}
+
 export async function POST(req: NextRequest) {
   console.log('\n========================================');
   console.log('🚀 UPLOAD ROUTE CALLED at:', new Date().toISOString());
@@ -457,24 +542,61 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log('1️⃣  Received request, parsing FormData...');
-    const formData = await req.formData();
-    const file = formData.get('file') as File;
-    const patientId = formData.get('patientId') as string;
+    const contentType = req.headers.get('content-type') || '';
+    let buffer: Buffer;
+    let patientId: string;
+    let publicId: string | undefined;
+    let reportUrl: string | undefined;
 
-    console.log('2️⃣  FormData parsed:', { file: file?.name, patientId });
+    if (contentType.includes('application/json')) {
+      console.log('1️⃣  Received Cloudinary upload reference...');
+      const body = await req.json();
+      patientId = body.patientId;
+      publicId = body.publicId;
+      reportUrl = body.reportUrl;
 
-    if (!file || !patientId) {
-      console.log('❌ Missing file or patientId');
-      return NextResponse.json({ error: 'Please provide both file and patient ID' }, { status: 400 });
-    }
-    if (file.type !== 'application/pdf') {
-      console.log('❌ Not a PDF');
-      return NextResponse.json({ error: 'Please upload a PDF file only' }, { status: 400 });
-    }
-    if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
-      console.log('❌ File too large');
-      return NextResponse.json({ error: `File size must be less than ${MAX_UPLOAD_FILE_SIZE_MB}MB` }, { status: 400 });
+      if (!patientId || !reportUrl) {
+        return NextResponse.json({ error: 'Please provide both report URL and patient ID' }, { status: 400 });
+      }
+      if (!isCloudinaryReportUrl(reportUrl, patientId)) {
+        return NextResponse.json({ error: 'Invalid report upload URL' }, { status: 400 });
+      }
+
+      publicId = publicId || getCloudinaryPublicIdFromUrl(reportUrl);
+      if (!publicId || !isValidCloudinaryPublicId(publicId, patientId)) {
+        return NextResponse.json({ error: 'Invalid report upload ID' }, { status: 400 });
+      }
+
+      console.log('2️⃣  Downloading uploaded PDF for analysis...');
+      buffer = await downloadPdfFromCloudinary(reportUrl, publicId);
+    } else if (contentType.includes('multipart/form-data')) {
+      console.log('1️⃣  Received request, parsing FormData...');
+      const formData = await req.formData();
+      const file = formData.get('file') as File;
+      patientId = formData.get('patientId') as string;
+
+      console.log('2️⃣  FormData parsed:', { file: file?.name, patientId });
+
+      if (!file || !patientId) {
+        console.log('❌ Missing file or patientId');
+        return NextResponse.json({ error: 'Please provide both file and patient ID' }, { status: 400 });
+      }
+      if (file.type !== 'application/pdf') {
+        console.log('❌ Not a PDF');
+        return NextResponse.json({ error: 'Please upload a PDF file only' }, { status: 400 });
+      }
+      if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+        console.log('❌ File too large');
+        return NextResponse.json({ error: `File size must be less than ${MAX_UPLOAD_FILE_SIZE_MB}MB` }, { status: 400 });
+      }
+
+      const bytes = await file.arrayBuffer();
+      buffer = Buffer.from(bytes);
+    } else {
+      return NextResponse.json(
+        { error: 'Unsupported upload request. Please upload from the Add Patient form.' },
+        { status: 415 }
+      );
     }
 
     console.log('3️⃣  Connecting to DB...');
@@ -492,27 +614,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Patient not found' }, { status: 404 });
     }
 
-    // Upload to Cloudinary
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-
-    console.log('4️⃣ Uploading to Cloudinary...');
-    const uploadResult = await new Promise((resolve, reject) => {
-      cloudinary.uploader.upload_stream(
-        { resource_type: 'raw', public_id: `reports/${patientId}` },
-        (error, result) => {
-          if (error) {
-            console.error('Cloudinary upload error:', error);
-            reject(new Error('Upload failed. Please try again'));
-          } else {
-            resolve(result);
+    if (!reportUrl) {
+      console.log('4️⃣ Uploading to Cloudinary...');
+      const uploadResult = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { resource_type: 'raw', public_id: `reports/${patientId}`, overwrite: true },
+          (error, result) => {
+            if (error) {
+              console.error('Cloudinary upload error:', error);
+              reject(new Error('Upload failed. Please try again'));
+            } else {
+              resolve(result);
+            }
           }
-        }
-      ).end(buffer);
-    });
+        ).end(buffer);
+      });
 
-    const reportUrl = (uploadResult as { secure_url?: string }).secure_url;
-    console.log('✅ Cloudinary upload done:', reportUrl);
+      reportUrl = (uploadResult as { secure_url?: string }).secure_url;
+      console.log('✅ Cloudinary upload done:', reportUrl);
+    }
 
     console.log('5️⃣ Extracting PDF text...');
     const extracted = await extractPdfText(buffer);
@@ -728,6 +848,13 @@ Rules:
       }
       if (error.message.includes('ETIMEDOUT')) {
         return NextResponse.json({ error: 'Request timeout. Please try again' }, { status: 500 });
+      }
+      if (
+        error.message.includes('Uploaded report could not be downloaded') ||
+        error.message.includes('File size must be less than') ||
+        error.message.includes('Please upload a PDF file only')
+      ) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
       }
       return NextResponse.json({ error: error.message }, { status: 500 });
     }

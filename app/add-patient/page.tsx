@@ -21,8 +21,16 @@ import { cn } from '@/lib/utils';
 
 type UploadProgress = 'idle' | 'uploading' | 'analyzing' | 'done';
 
-const MAX_UPLOAD_FILE_SIZE_MB = 4;
+const MAX_UPLOAD_FILE_SIZE_MB = 20;
 const MAX_UPLOAD_FILE_SIZE_BYTES = MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024;
+
+type CloudinarySignatureResponse = {
+  apiKey: string;
+  publicId: string;
+  signature: string;
+  timestamp: number;
+  uploadUrl: string;
+};
 
 const progressCopy: Record<Exclude<UploadProgress, 'idle'>, { title: string; description: string }> = {
   uploading: {
@@ -158,18 +166,56 @@ export default function AddPatientPage() {
 
       if (file) {
         setUploadProgress('uploading');
-        const formDataUpload = new FormData();
-        formDataUpload.append('file', file);
-        formDataUpload.append('patientId', patient._id);
+
+        const signRes = await fetch('/api/upload/sign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patientId: patient._id,
+            fileSize: file.size,
+            fileType: file.type,
+          }),
+        });
+
+        if (!signRes.ok) {
+          const errorData = await signRes.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Upload could not be prepared. Please try again');
+        }
+
+        const signatureData = (await signRes.json()) as CloudinarySignatureResponse;
+        const cloudinaryFormData = new FormData();
+        cloudinaryFormData.append('file', file);
+        cloudinaryFormData.append('api_key', signatureData.apiKey);
+        cloudinaryFormData.append('timestamp', String(signatureData.timestamp));
+        cloudinaryFormData.append('signature', signatureData.signature);
+        cloudinaryFormData.append('public_id', signatureData.publicId);
+        cloudinaryFormData.append('overwrite', 'true');
+
+        const cloudinaryRes = await fetch(signatureData.uploadUrl, {
+          method: 'POST',
+          body: cloudinaryFormData,
+        });
+
+        const cloudinaryData = await cloudinaryRes.json().catch(() => null);
+        if (!cloudinaryRes.ok || !cloudinaryData?.secure_url) {
+          throw new Error(cloudinaryData?.error?.message || 'Upload failed. Please try again');
+        }
+
+        setUploadProgress('analyzing');
 
         const uploadRes = await fetch('/api/upload', {
           method: 'POST',
-          body: formDataUpload,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patientId: patient._id,
+            publicId: cloudinaryData.public_id || signatureData.publicId,
+            reportUrl: cloudinaryData.secure_url,
+          }),
         });
 
         if (!uploadRes.ok) {
           const errorData = await uploadRes.json().catch(() => ({}));
-          throw new Error(errorData.error || 'Upload failed. Please try again');
+          throw new Error(errorData.error || 'Analysis failed. Please try again');
         }
 
         const uploadData = await uploadRes.json().catch(() => null);
@@ -185,7 +231,6 @@ export default function AddPatientPage() {
           showError(reason, 'error');
         }
 
-        setUploadProgress('analyzing');
         await new Promise((resolve) => setTimeout(resolve, 2000));
         setUploadProgress('done');
       }
@@ -257,7 +302,7 @@ export default function AddPatientPage() {
               </div>
               <div className="rounded-2xl bg-slate-50 p-4">
                 <p className="font-medium text-slate-900">Report file</p>
-                <p className="mt-1">PDF format only, maximum size 10MB.</p>
+                <p className="mt-1">PDF format only, maximum size 20MB.</p>
               </div>
               <div className="rounded-2xl bg-slate-50 p-4">
                 <p className="font-medium text-slate-900">Processing</p>
@@ -371,7 +416,7 @@ export default function AddPatientPage() {
                         </svg>
                       </div>
                       <p className="text-base font-medium text-slate-900">Drop a PDF or click to browse</p>
-                      <p className="mt-2 text-sm text-slate-500">Secure upload, 4MB max, PDF only.</p>
+                      <p className="mt-2 text-sm text-slate-500">Secure upload, 20MB max, PDF only.</p>
                     </>
                   ) : (
                     <div className="w-full text-left">
