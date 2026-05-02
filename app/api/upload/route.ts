@@ -329,15 +329,30 @@ function getGeminiFailureReason(error: unknown, modelName: string) {
   const status = (error as { status?: number })?.status;
   const message = error instanceof Error ? error.message.toLowerCase() : '';
 
+  if (
+    message.includes('api key') ||
+    message.includes('api_key') ||
+    message.includes('key not valid') ||
+    message.includes('invalid key')
+  ) {
+    if (message.includes('leaked')) return 'gemini_api_key_leaked_or_disabled';
+    return 'gemini_api_key_invalid_or_restricted';
+  }
   if (status === 401 || status === 403) {
     if (message.includes('leaked')) return 'gemini_api_key_leaked_or_disabled';
-    if (message.includes('api key')) return 'gemini_api_key_invalid_or_restricted';
     return 'gemini_permission_denied';
   }
+  if (status === 400) return 'gemini_bad_request';
   if (status === 404) return `gemini_model_not_found:${modelName}`;
   if (status === 429) return 'gemini_quota_exceeded';
   if (error instanceof SyntaxError) return 'invalid_ai_json_response';
   return 'gemini_request_failed';
+}
+
+function getGeminiFailureDetail(error: unknown) {
+  const status = (error as { status?: number })?.status;
+  const message = error instanceof Error ? error.message.replace(/\s+/g, ' ').trim() : '';
+  return [status ? `status ${status}` : '', message].filter(Boolean).join(': ').slice(0, 220);
 }
 
 function extractTopText(value: string | undefined, maxLength = 220) {
@@ -645,6 +660,7 @@ export async function POST(req: NextRequest) {
     let aiResponse = fallbackAIResponse;
     let aiStatus: 'generated' | 'fallback' = 'fallback';
     let aiReason = 'ai_not_attempted';
+    let aiErrorDetail = '';
 
     const analysisPrompt = `
 You are a clinical report analyzer. Analyze this medical report and return structured JSON.
@@ -722,6 +738,7 @@ Rules:
         } catch (aiError: unknown) {
           console.error(`Gemini analysis failed for model ${modelName}:`, aiError);
           aiReason = getGeminiFailureReason(aiError, modelName);
+          aiErrorDetail = getGeminiFailureDetail(aiError);
           if (aiReason.startsWith('gemini_model_not_found:')) {
             continue;
           }
@@ -828,6 +845,7 @@ Rules:
       message: 'Upload and processing completed',
       aiStatus,
       aiReason,
+      ...(aiStatus === 'fallback' && aiErrorDetail ? { aiErrorDetail } : {}),
     });
   } catch (error) {
     console.error('\n========================================');
